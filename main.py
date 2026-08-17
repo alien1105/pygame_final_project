@@ -29,6 +29,7 @@ BROWN = (139, 69, 19) # 座椅顏色
 DARK_BROWN = (101, 67, 33) # 座椅暗面顏色
 RED = (255, 0, 0) # 按鈕顏色
 GREEN = (0, 255, 0) # 按鈕顏色
+PURPLE = (150, 100, 150) # 老太太用紫色方塊代表
 
 # 載入字型 (使用電腦內建的中文字型)
 font = pygame.font.SysFont("microsoftjhenghei", 28)
@@ -84,6 +85,23 @@ doors = { # 定義每個場景的互動門
     }
 }
 
+# --- 老太太 NPC ---
+OLD_LADY_SCENE = 'CARRIAGE_1'
+old_lady_rect = pygame.Rect(410, HEIGHT - FLOOR_HEIGHT - 90, 60, 90) # 坐在車廂一的座位上
+
+# 老太太第一天的對話劇情，格式為 (說話者, 台詞)
+old_lady_dialogue = [
+    ("老太太", "新人？"),
+    ("主角", "是。"),
+    ("老太太", "那你晚上可別回頭。"),
+    ("主角", "回頭？"),
+    ("老太太", "……"), # 她卻像沒說過這句話一樣
+]
+
+# --- 對話狀態管理 ---
+dialogue_lines = []
+dialogue_index = 0
+
 def draw_manual_screen():
     """繪製操作手冊畫面"""
     # 半透明背景
@@ -103,7 +121,7 @@ def draw_manual_screen():
     # 說明文字
     instructions = [
         "← → : 左右移動",
-        "F : 與門互動，切換場景",
+        "F : 與場景互動",
         "TAB : 關閉此手冊"
     ]
     for i, text in enumerate(instructions):
@@ -258,6 +276,33 @@ def draw_side_chair(x_pos, camera_offset_x):
     pygame.draw.rect(screen, DARK_BROWN, (x_pos - 10 - camera_offset_x, HEIGHT - FLOOR_HEIGHT - back_height, 10, back_height)) # 椅背正面
     pygame.draw.rect(screen, DARK_BROWN, (x_pos - 10 - camera_offset_x, HEIGHT - FLOOR_HEIGHT - seat_height, seat_depth, seat_height)) # 座椅正面
 
+def draw_old_lady(camera_offset_x):
+    """繪製老太太 NPC（僅在車廂一場景顯示）"""
+    if current_scene != OLD_LADY_SCENE:
+        return
+    screen_rect = old_lady_rect.move(-camera_offset_x, 0)
+    pygame.draw.rect(screen, PURPLE, screen_rect)
+    pygame.draw.circle(screen, PURPLE, (screen_rect.centerx, screen_rect.top - 15), 15) # 頭部
+
+
+def draw_dialogue_box():
+    """繪製對話框，顯示目前這句台詞"""
+    speaker, text = dialogue_lines[dialogue_index]
+
+    box_rect = pygame.Rect(60, HEIGHT - 140, WIDTH - 120, 100)
+    pygame.draw.rect(screen, WHITE, box_rect)
+    pygame.draw.rect(screen, BLACK, box_rect, 3)
+
+    name_surf = font_small.render(speaker, True, RED if speaker == "老太太" else BLUE)
+    screen.blit(name_surf, (box_rect.x + 20, box_rect.y + 12))
+
+    text_surf = font.render(text, True, BLACK)
+    screen.blit(text_surf, (box_rect.x + 20, box_rect.y + 45))
+
+    hint_surf = font_small.render("F : 繼續", True, DARK_GRAY)
+    screen.blit(hint_surf, (box_rect.right - hint_surf.get_width() - 15, box_rect.bottom - hint_surf.get_height() - 10))
+
+
 def draw_conductor(surface, rect, image, camera_offset_x):
     """繪製列車長"""
     # 根據攝影機位置計算角色在螢幕上的位置
@@ -269,10 +314,14 @@ def draw_conductor(surface, rect, image, camera_offset_x):
         pygame.draw.rect(surface, BLUE, screen_rect)
 
 def draw_interact_hint(camera_offset_x):
-    """如果玩家靠近可互動的門，在角色上方顯示按 F 互動的提示"""
+    """如果玩家靠近可互動的門或 NPC，在角色上方顯示按 F 互動的提示"""
     scene_doors = doors.get(current_scene, {})
-    for door_rect in scene_doors.values():
-        if conductor_rect.colliderect(door_rect):
+    interactables = list(scene_doors.values())
+    if current_scene == OLD_LADY_SCENE:
+        interactables.append(old_lady_rect)
+
+    for target_rect in interactables:
+        if conductor_rect.colliderect(target_rect):
             hint_surf = font_small.render("F : 互動", True, WHITE)
             hint_bg = pygame.Surface((hint_surf.get_width() + 16, hint_surf.get_height() + 10), pygame.SRCALPHA)
             hint_bg.fill((0, 0, 0, 180))
@@ -312,7 +361,12 @@ while running:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_TAB:
                     game_state = 'MANUAL'
-                if event.key == pygame.K_f:
+                if event.key == pygame.K_f and current_scene == OLD_LADY_SCENE and conductor_rect.colliderect(old_lady_rect):
+                    # 與老太太互動，開始對話
+                    dialogue_lines = old_lady_dialogue
+                    dialogue_index = 0
+                    game_state = 'DIALOGUE'
+                elif event.key == pygame.K_f:
                     # (場景切換邏輯...)
                     if current_scene == 'CARRIAGE_1':
                         if conductor_rect.colliderect(doors['CARRIAGE_1']['exit_door']):
@@ -368,9 +422,27 @@ while running:
 
         # C. 畫面繪製
         draw_background(camera_x)
+        draw_old_lady(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
         draw_interact_hint(camera_x)
         draw_manual_hint()
+
+    elif game_state == 'DIALOGUE':
+        # --- 對話狀態的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_f or event.key == pygame.K_SPACE:
+                    dialogue_index += 1
+                    if dialogue_index >= len(dialogue_lines):
+                        game_state = 'PLAYING'
+
+        draw_background(camera_x)
+        draw_old_lady(camera_x)
+        draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        if game_state == 'DIALOGUE':
+            draw_dialogue_box()
 
     # --- D. 更新畫面 ---
     pygame.display.flip()
