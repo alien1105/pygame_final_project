@@ -30,6 +30,7 @@ DARK_BROWN = (101, 67, 33) # 座椅暗面顏色
 RED = (255, 0, 0) # 按鈕顏色
 GREEN = (0, 255, 0) # 按鈕顏色
 PURPLE = (150, 100, 150) # 老太太用紫色方塊代表
+PINK = (230, 160, 190) # 小女孩用粉色方塊代表
 
 # 載入字型 (使用電腦內建的中文字型)
 font = pygame.font.SysFont("microsoftjhenghei", 28)
@@ -98,9 +99,34 @@ old_lady_dialogue = [
     ("老太太", "……"), # 她卻像沒說過這句話一樣
 ]
 
+# --- 小女孩 NPC ---
+GIRL_SCENE = 'CARRIAGE_2' # 她一個人坐在最後一節車廂
+girl_rect = pygame.Rect(410, HEIGHT - FLOOR_HEIGHT - 80, 50, 80) # 坐在車廂二的座位上
+
+# 小女孩第一天的對話劇情
+girl_dialogue = [
+    ("小女孩", "……"),
+    ("主角", "你在畫什麼？"),
+    ("小女孩", "火車。"),
+    ("主角", "（她把畫轉向你，畫裡的火車旁畫了六個人。）"),
+    ("主角", "這班車明明只有五個人……可以給我看看這張畫嗎？"),
+    ("小女孩", "……嗯。"),
+    (" ", "從小女孩手中拿到了「小女孩的畫」。"),
+]
+
+# 對話中不同說話者對應的文字顏色
+SPEAKER_COLORS = {
+    "老太太": RED,
+    "小女孩": PINK,
+    "主角": BLUE,
+    "旁白": DARK_GRAY,
+}
+
 # --- 對話狀態管理 ---
 dialogue_lines = []
 dialogue_index = 0
+active_npc = None # 記錄目前正在對話的 NPC，用於對話結束後觸發後續事件
+has_girl_painting = False # 是否已從小女孩手中取得畫
 
 def draw_manual_screen():
     """繪製操作手冊畫面"""
@@ -285,6 +311,15 @@ def draw_old_lady(camera_offset_x):
     pygame.draw.circle(screen, PURPLE, (screen_rect.centerx, screen_rect.top - 15), 15) # 頭部
 
 
+def draw_girl(camera_offset_x):
+    """繪製小女孩 NPC（僅在車廂二場景顯示）"""
+    if current_scene != GIRL_SCENE:
+        return
+    screen_rect = girl_rect.move(-camera_offset_x, 0)
+    pygame.draw.rect(screen, PINK, screen_rect)
+    pygame.draw.circle(screen, PINK, (screen_rect.centerx, screen_rect.top - 12), 12) # 頭部
+
+
 def draw_dialogue_box():
     """繪製對話框，顯示目前這句台詞"""
     speaker, text = dialogue_lines[dialogue_index]
@@ -293,7 +328,7 @@ def draw_dialogue_box():
     pygame.draw.rect(screen, WHITE, box_rect)
     pygame.draw.rect(screen, BLACK, box_rect, 3)
 
-    name_surf = font_small.render(speaker, True, RED if speaker == "老太太" else BLUE)
+    name_surf = font_small.render(speaker, True, SPEAKER_COLORS.get(speaker, BLACK))
     screen.blit(name_surf, (box_rect.x + 20, box_rect.y + 12))
 
     text_surf = font.render(text, True, BLACK)
@@ -319,6 +354,8 @@ def draw_interact_hint(camera_offset_x):
     interactables = list(scene_doors.values())
     if current_scene == OLD_LADY_SCENE:
         interactables.append(old_lady_rect)
+    if current_scene == GIRL_SCENE:
+        interactables.append(girl_rect)
 
     for target_rect in interactables:
         if conductor_rect.colliderect(target_rect):
@@ -365,6 +402,13 @@ while running:
                     # 與老太太互動，開始對話
                     dialogue_lines = old_lady_dialogue
                     dialogue_index = 0
+                    active_npc = 'OLD_LADY'
+                    game_state = 'DIALOGUE'
+                elif event.key == pygame.K_f and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_rect):
+                    # 與小女孩互動，開始對話
+                    dialogue_lines = girl_dialogue
+                    dialogue_index = 0
+                    active_npc = 'GIRL'
                     game_state = 'DIALOGUE'
                 elif event.key == pygame.K_f:
                     # (場景切換邏輯...)
@@ -423,6 +467,7 @@ while running:
         # C. 畫面繪製
         draw_background(camera_x)
         draw_old_lady(camera_x)
+        draw_girl(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
         draw_interact_hint(camera_x)
         draw_manual_hint()
@@ -436,10 +481,14 @@ while running:
                 if event.key == pygame.K_f or event.key == pygame.K_SPACE:
                     dialogue_index += 1
                     if dialogue_index >= len(dialogue_lines):
+                        if active_npc == 'GIRL':
+                            has_girl_painting = True
+                        active_npc = None
                         game_state = 'PLAYING'
 
         draw_background(camera_x)
         draw_old_lady(camera_x)
+        draw_girl(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
         if game_state == 'DIALOGUE':
             draw_dialogue_box()
