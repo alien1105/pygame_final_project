@@ -29,6 +29,11 @@ BROWN = (139, 69, 19) # 座椅顏色
 DARK_BROWN = (101, 67, 33) # 座椅暗面顏色
 RED = (255, 0, 0) # 按鈕顏色
 GREEN = (0, 255, 0) # 按鈕顏色
+PURPLE = (150, 100, 150) # 老太太用紫色方塊代表
+PINK = (230, 160, 190) # 小女孩用粉色方塊代表
+GOLD = (218, 165, 32) # 可拾取道具標記顏色
+TAPE_COLOR = (222, 184, 135) # 封住暗格的膠帶顏色
+NIGHT_OVERLAY_COLOR = (10, 10, 40, 140) # 夜晚時疊加的半透明深藍色
 
 # 載入字型 (使用電腦內建的中文字型)
 font = pygame.font.SysFont("microsoftjhenghei", 28)
@@ -66,6 +71,54 @@ current_scene = 'COCKPIT' # 遊戲從駕駛艙開始
 game_state = 'MANUAL' # 初始狀態為顯示手冊
 close_button_rect = pygame.Rect(WIDTH - 50, 50, 30, 30) # 手冊的關閉按鈕
 
+# --- 天數／白天晚上切換（依序循環：第一天白天 → 第一天晚上 → 第二天白天 → 第二天晚上）---
+DAY_NIGHT_STAGES = ['DAY1_DAY', 'DAY1_NIGHT', 'DAY2_DAY', 'DAY2_NIGHT']
+DAY_NIGHT_LABELS = {
+    'DAY1_DAY': '第一天白天',
+    'DAY1_NIGHT': '第一天晚上',
+    'DAY2_DAY': '第二天白天',
+    'DAY2_NIGHT': '第二天晚上',
+}
+day_night_index = 0 # 目前所在階段在 DAY_NIGHT_STAGES 中的索引
+time_toggle_button_rect = pygame.Rect(WIDTH // 2 - 90, 15, 180, 34) # 切換到下一個天數／時段的按鈕
+
+# --- 第一天晚上劇情 ---
+day1_night_triggered = False # 是否已經播放過第一天晚上的事件，避免重複觸發
+lights_out = False # 列車燈光是否熄滅中，此時任務指引是返回駕駛室，且開門需要手電筒
+
+# --- 手電筒 ---
+flashlight_on = False # 手電筒是否開啟中（需持有「老式手電筒」才能開關）
+facing_direction = 'RIGHT' # 角色目前面向，決定手電筒照亮的方向
+
+night1_intro_lines = [
+    ("旁白", "主角第一次執行夜班，一開始一切正常。"),
+    ("旁白", "列車離站，經過隧道、經過森林、經過幾個車站。"),
+    ("旁白", "凌晨 00:17，列車燈光突然熄滅。"),
+]
+
+night1_knock_lines = [
+    ("旁白", "叩。叩。叩。有人在敲駕駛室門。"),
+]
+
+night1_lines_closed = [ # 選擇「不開門」後的劇情
+    ("旁白", "你沒有開門。幾秒後，敲門聲停止了。"),
+    ("旁白", "列車離開隧道，燈恢復正常。"),
+    ("旁白", "主角看向監視器，發現最後一節車廂多了一個人。"),
+    ("旁白", "白天看到的乘客名單明明只有五人，現在卻變成六人。"),
+    ("旁白", "畫裡的第六個人，就是現在出現的人。"),
+    ("旁白", "第一天，結束。"),
+]
+
+night1_lines_open = [ # 選擇「開門」後的劇情——會被發現
+    ("旁白", "你打開了駕駛室的門。"),
+    ("旁白", "門外空無一人，只有一陣刺骨的冷風灌了進來。"),
+    ("旁白", "就在這時，你感覺背後傳來一股視線。"),
+    ("旁白", "你緩緩回過頭——那個「多出來的人」，正站在你身後，直直地看著你。"),
+]
+
+night1_choice_open_rect = pygame.Rect(WIDTH // 2 - 180, HEIGHT // 2 + 20, 140, 50)
+night1_choice_close_rect = pygame.Rect(WIDTH // 2 + 40, HEIGHT // 2 + 20, 140, 50)
+
 doors = { # 定義每個場景的互動門
     'CARRIAGE_1': {
         'cockpit_door': pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT),
@@ -84,31 +137,187 @@ doors = { # 定義每個場景的互動門
     }
 }
 
+# --- 老太太 NPC ---
+OLD_LADY_SCENE = 'CARRIAGE_1'
+old_lady_rect = pygame.Rect(410, HEIGHT - FLOOR_HEIGHT - 90, 60, 90) # 坐在車廂一的座位上
+
+# 老太太第一天的對話劇情，格式為 (說話者, 台詞)
+old_lady_dialogue = [
+    ("老太太", "新人？"),
+    ("主角", "是。"),
+    ("老太太", "那你晚上可別回頭。"),
+    ("主角", "回頭？"),
+    ("老太太", "……"), # 她卻像沒說過這句話一樣
+]
+
+# --- 小女孩 NPC ---
+GIRL_SCENE = 'CARRIAGE_2' # 她一個人坐在最後一節車廂
+girl_rect = pygame.Rect(410, HEIGHT - FLOOR_HEIGHT - 80, 50, 80) # 坐在車廂二的座位上
+
+# 小女孩第一天的對話劇情
+girl_dialogue = [
+    ("小女孩", "……"),
+    ("主角", "你在畫什麼？"),
+    ("小女孩", "火車。"),
+    ("主角", "（她把畫轉向你，畫裡的火車旁畫了六個人。）"),
+    ("主角", "這班車明明只有五個人……可以給我看看這張畫嗎？"),
+    ("小女孩", "……嗯。"),
+    (" ", "從小女孩手中拿到了「小女孩的畫」。"),
+]
+
+# 對話中不同說話者對應的文字顏色
+SPEAKER_COLORS = {
+    "老太太": RED,
+    "小女孩": PINK,
+    "主角": BLUE,
+    "旁白": DARK_GRAY,
+}
+
+# --- 對話狀態管理 ---
+dialogue_lines = []
+dialogue_index = 0
+active_npc = None # 記錄目前正在對話的 NPC，用於對話結束後觸發後續事件
+has_girl_painting = False # 是否已從小女孩手中取得畫
+has_guide = False # 是否已取得《夜間行駛生存指南》，取得後可在手冊畫面切換查看
+
+# --- 手冊畫面（含左側頁籤，可切換操作手冊／生存指南）---
+manual_view = 'MANUAL' # 目前手冊畫面顯示的頁籤：MANUAL 操作手冊 / GUIDE 生存指南
+manual_panel_rect = pygame.Rect(WIDTH // 2 - 350, HEIGHT // 2 - 160, 700, 320)
+manual_sidebar_width = 160
+manual_tab_manual_rect = pygame.Rect(manual_panel_rect.x + 15, manual_panel_rect.y + 70, manual_sidebar_width - 30, 50)
+manual_tab_guide_rect = pygame.Rect(manual_panel_rect.x + 15, manual_panel_rect.y + 130, manual_sidebar_width - 30, 50)
+
+# 《夜間行駛生存指南》第一頁的前三條規則，格式為 (規則標題, 規則內容, 補充說明)
+guide_rules = [
+    ("規則一", "夜間駕駛時，看到月台有人，不要鳴笛。", "因為那個人不一定是在等車。"),
+    ("規則二", "列車進入隧道後，如果車廂燈熄滅，不要離開駕駛室。", "不管你聽見什麼。"),
+    ("規則三", "凌晨 00:17，不要查看後視鏡。", "如果已經看了，不要數車廂裡有幾個人。"),
+]
+
+# --- 第一天白天可收集道具 ---
+inventory = [] # 玩家背包，存放已取得的道具名稱
+
+# 每個道具點的位置定義：所在場景、可互動範圍、內含道具、是否已被拾取
+item_spots = [
+    {
+        'scene': 'CARRIAGE_1',
+        'rect': pygame.Rect(840, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 60, DOOR_HEIGHT), # 車廂座位上
+        'items': ['舊車票'],
+        'collected': False,
+    },
+    {
+        'scene': 'CONNECTION',
+        'rect': pygame.Rect(30, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 70, DOOR_HEIGHT), # 連接處牆壁上
+        'items': ['舊路線圖'],
+        'collected': False,
+    },
+]
+
+
+def get_item_spot_at(scene, rect):
+    """回傳玩家目前所在位置可拾取、且尚未拾取的道具點（沒有則回傳 None）"""
+    for spot in item_spots:
+        if not spot['collected'] and spot['scene'] == scene and rect.colliderect(spot['rect']):
+            return spot
+    return None
+
+
+def get_current_scene_door_at(rect):
+    """回傳玩家目前所在位置碰到的門（沒有則回傳 None）"""
+    for door_rect in doors.get(current_scene, {}).values():
+        if rect.colliderect(door_rect):
+            return door_rect
+    return None
+
+
+# --- 駕駛艙操作台細節（按 F 進入細節畫面，用滑鼠點擊個別拾取）---
+CONSOLE_FOCUS_SCENE = 'COCKPIT'
+console_cabinet_rect = pygame.Rect(30, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 100, DOOR_HEIGHT) # 操作台下置物櫃
+
+console_panel_rect = pygame.Rect(WIDTH // 2 - 330, HEIGHT // 2 - 160, 660, 320)
+_console_slot_size = 130
+_console_slot_gap = 15
+_console_slots_total_width = _console_slot_size * 4 + _console_slot_gap * 3
+_console_slot_start_x = console_panel_rect.centerx - _console_slots_total_width // 2
+_console_slot_y = console_panel_rect.y + 90
+
+console_items = [
+    {'name': '老式手電筒', 'color': (200, 200, 80), 'rect': pygame.Rect(_console_slot_start_x, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': False},
+    {'name': '車站鑰匙', 'color': (190, 190, 190), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap), _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': False},
+    {'name': '維修員留下的螺絲起子', 'color': (150, 110, 70), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap) * 2, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': False},
+    {'name': '《夜間行駛生存指南》', 'color': (90, 60, 40), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap) * 3, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': True},
+]
+
+
+def console_has_items_left():
+    """置物櫃裡是否還有尚未拾取的道具"""
+    return any(not item['collected'] for item in console_items)
+
 def draw_manual_screen():
-    """繪製操作手冊畫面"""
+    """繪製手冊畫面，左側頁籤可切換操作手冊／生存指南"""
     # 半透明背景
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 180))
     screen.blit(overlay, (0, 0))
 
-    # 手冊面板
-    panel_rect = pygame.Rect(WIDTH // 2 - 250, HEIGHT // 2 - 150, 500, 300)
+    panel_rect = manual_panel_rect
     pygame.draw.rect(screen, WHITE, panel_rect)
     pygame.draw.rect(screen, BLACK, panel_rect, 3)
 
-    # 標題
-    title_surf = font.render("操作手冊", True, BLACK)
-    screen.blit(title_surf, (panel_rect.centerx - title_surf.get_width() // 2, panel_rect.y + 20))
+    # 左側頁籤側欄
+    sidebar_rect = pygame.Rect(panel_rect.x, panel_rect.y, manual_sidebar_width, panel_rect.height)
+    pygame.draw.rect(screen, GRAY, sidebar_rect)
+    pygame.draw.line(screen, BLACK, (sidebar_rect.right, panel_rect.y), (sidebar_rect.right, panel_rect.bottom), 3)
 
-    # 說明文字
-    instructions = [
-        "← → : 左右移動",
-        "F : 與門互動，切換場景",
-        "TAB : 關閉此手冊"
-    ]
-    for i, text in enumerate(instructions):
-        text_surf = font_small.render(text, True, BLACK)
-        screen.blit(text_surf, (panel_rect.x + 40, panel_rect.y + 80 + i * 40))
+    # 「操作手冊」頁籤
+    pygame.draw.rect(screen, WHITE if manual_view == 'MANUAL' else GRAY, manual_tab_manual_rect)
+    pygame.draw.rect(screen, BLACK, manual_tab_manual_rect, 2)
+    tab_manual_surf = font_small.render("操作手冊", True, BLACK)
+    screen.blit(tab_manual_surf, (manual_tab_manual_rect.centerx - tab_manual_surf.get_width() // 2,
+                                  manual_tab_manual_rect.centery - tab_manual_surf.get_height() // 2))
+
+    # 「生存指南」頁籤（取得指南後才會出現）
+    if has_guide:
+        tab_guide_bg = WHITE if manual_view == 'GUIDE' else GRAY
+        pygame.draw.rect(screen, tab_guide_bg, manual_tab_guide_rect)
+        pygame.draw.rect(screen, BLACK, manual_tab_guide_rect, 2)
+        tab_guide_surf = font_small.render("生存指南", True, BLACK)
+        screen.blit(tab_guide_surf, (manual_tab_guide_rect.centerx - tab_guide_surf.get_width() // 2,
+                                     manual_tab_guide_rect.centery - tab_guide_surf.get_height() // 2))
+
+    # 右側內容區
+    content_x = panel_rect.x + manual_sidebar_width + 25
+
+    if manual_view == 'GUIDE' and has_guide:
+        title_surf = font.render("《夜間行駛生存指南》", True, BLACK)
+        screen.blit(title_surf, (content_x, panel_rect.y + 20))
+
+        rule_y = panel_rect.y + 65
+        for label, rule_text, desc_text in guide_rules:
+            label_surf = font_small.render(label, True, RED)
+            screen.blit(label_surf, (content_x, rule_y))
+
+            rule_surf = font_small.render(rule_text, True, BLACK)
+            screen.blit(rule_surf, (content_x, rule_y + 22))
+
+            desc_surf = font_small.render(desc_text, True, DARK_GRAY)
+            screen.blit(desc_surf, (content_x, rule_y + 44))
+
+            rule_y += 22 * 3 + 8
+    else:
+        title_surf = font.render("操作手冊", True, BLACK)
+        screen.blit(title_surf, (content_x, panel_rect.y + 20))
+
+        instructions = [
+            "← → : 左右移動",
+            "F : 與場景互動",
+            "B : 開啟背包",
+            "L : 開關手電筒（需持有手電筒）",
+            "TAB : 關閉此手冊"
+        ]
+        for i, text in enumerate(instructions):
+            text_surf = font_small.render(text, True, BLACK)
+            screen.blit(text_surf, (content_x, panel_rect.y + 90 + i * 40))
 
     # 關閉按鈕
     pygame.draw.rect(screen, RED, close_button_rect)
@@ -258,6 +467,311 @@ def draw_side_chair(x_pos, camera_offset_x):
     pygame.draw.rect(screen, DARK_BROWN, (x_pos - 10 - camera_offset_x, HEIGHT - FLOOR_HEIGHT - back_height, 10, back_height)) # 椅背正面
     pygame.draw.rect(screen, DARK_BROWN, (x_pos - 10 - camera_offset_x, HEIGHT - FLOOR_HEIGHT - seat_height, seat_depth, seat_height)) # 座椅正面
 
+def draw_old_lady(camera_offset_x):
+    """繪製老太太 NPC（僅在車廂一場景顯示）"""
+    if current_scene != OLD_LADY_SCENE:
+        return
+    screen_rect = old_lady_rect.move(-camera_offset_x, 0)
+    pygame.draw.rect(screen, PURPLE, screen_rect)
+    pygame.draw.circle(screen, PURPLE, (screen_rect.centerx, screen_rect.top - 15), 15) # 頭部
+
+
+def draw_girl(camera_offset_x):
+    """繪製小女孩 NPC（僅在車廂二場景顯示）"""
+    if current_scene != GIRL_SCENE:
+        return
+    screen_rect = girl_rect.move(-camera_offset_x, 0)
+    pygame.draw.rect(screen, PINK, screen_rect)
+    pygame.draw.circle(screen, PINK, (screen_rect.centerx, screen_rect.top - 12), 12) # 頭部
+
+
+def draw_inventory_screen():
+    """繪製背包畫面，列出已拾取的道具"""
+    # 半透明背景
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 180))
+    screen.blit(overlay, (0, 0))
+
+    # 背包面板
+    panel_rect = pygame.Rect(WIDTH // 2 - 250, HEIGHT // 2 - 150, 500, 300)
+    pygame.draw.rect(screen, WHITE, panel_rect)
+    pygame.draw.rect(screen, BLACK, panel_rect, 3)
+
+    # 標題
+    title_surf = font.render("背包", True, BLACK)
+    screen.blit(title_surf, (panel_rect.centerx - title_surf.get_width() // 2, panel_rect.y + 20))
+
+    if inventory:
+        for i, item_name in enumerate(inventory):
+            item_surf = font_small.render(f"・{item_name}", True, BLACK)
+            screen.blit(item_surf, (panel_rect.x + 40, panel_rect.y + 70 + i * 32))
+    else:
+        empty_surf = font_small.render("目前沒有任何道具。", True, DARK_GRAY)
+        screen.blit(empty_surf, (panel_rect.x + 40, panel_rect.y + 70))
+
+    hint_surf = font_small.render("B : 關閉背包", True, DARK_GRAY)
+    screen.blit(hint_surf, (panel_rect.right - hint_surf.get_width() - 20, panel_rect.bottom - hint_surf.get_height() - 15))
+
+
+def draw_item_spots(camera_offset_x):
+    """繪製目前場景中尚未拾取的道具標記"""
+    for spot in item_spots:
+        if spot['scene'] != current_scene or spot['collected']:
+            continue
+        marker_rect = pygame.Rect(0, 0, 26, 26)
+        marker_rect.center = (spot['rect'].centerx - camera_offset_x, HEIGHT - FLOOR_HEIGHT - 30)
+        pygame.draw.rect(screen, GOLD, marker_rect)
+        pygame.draw.rect(screen, BLACK, marker_rect, 2)
+
+    if current_scene == CONSOLE_FOCUS_SCENE and console_has_items_left():
+        marker_rect = pygame.Rect(0, 0, 26, 26)
+        marker_rect.center = (console_cabinet_rect.centerx - camera_offset_x, HEIGHT - FLOOR_HEIGHT - 30)
+        pygame.draw.rect(screen, GOLD, marker_rect)
+        pygame.draw.rect(screen, BLACK, marker_rect, 2)
+
+
+def draw_console_focus():
+    """繪製操作台置物櫃的細節畫面，可用滑鼠點擊個別拾取道具"""
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 200))
+    screen.blit(overlay, (0, 0))
+
+    pygame.draw.rect(screen, DARK_GRAY, console_panel_rect)
+    pygame.draw.rect(screen, BLACK, console_panel_rect, 3)
+
+    title_surf = font.render("置物櫃", True, WHITE)
+    screen.blit(title_surf, (console_panel_rect.centerx - title_surf.get_width() // 2, console_panel_rect.y + 15))
+
+    for item in console_items:
+        slot_rect = item['rect']
+        if item['collected']:
+            pygame.draw.rect(screen, GRAY, slot_rect)
+            pygame.draw.rect(screen, DARK_GRAY, slot_rect, 3)
+            label = "(已拾取)"
+        elif item.get('sealed'):
+            pygame.draw.rect(screen, item['color'], slot_rect)
+            pygame.draw.rect(screen, BLACK, slot_rect, 3)
+            # 封住暗格的膠帶（交叉貼成 X 型）
+            pygame.draw.line(screen, TAPE_COLOR, slot_rect.topleft, slot_rect.bottomright, 12)
+            pygame.draw.line(screen, TAPE_COLOR, slot_rect.topright, slot_rect.bottomleft, 12)
+            label = "被膠帶封住"
+        else:
+            pygame.draw.rect(screen, item['color'], slot_rect)
+            pygame.draw.rect(screen, BLACK, slot_rect, 3)
+            label = item['name']
+
+        label_surf = font_small.render(label, True, WHITE)
+        screen.blit(label_surf, (slot_rect.centerx - label_surf.get_width() // 2, slot_rect.bottom + 10))
+
+    hint_surf = font_small.render("點擊膠帶撕開・點擊道具拾取・F : 離開細節畫面", True, WHITE)
+    screen.blit(hint_surf, (console_panel_rect.centerx - hint_surf.get_width() // 2, console_panel_rect.bottom - 30))
+
+
+def draw_inventory_hint():
+    """在左上角顯示目前背包內的道具數量"""
+    hint_text_surf = font_small.render(f"背包 : {len(inventory)}", True, WHITE)
+    hint_rect = hint_text_surf.get_rect()
+    hint_bg_rect = pygame.Rect(0, 0, hint_rect.width + 20, hint_rect.height + 12)
+    hint_bg_rect.topleft = (15, 15)
+    hint_bg = pygame.Surface(hint_bg_rect.size, pygame.SRCALPHA)
+    hint_bg.fill((0, 0, 0, 150))
+    screen.blit(hint_bg, hint_bg_rect)
+    screen.blit(hint_text_surf, (hint_bg_rect.centerx - hint_rect.width // 2, hint_bg_rect.centery - hint_rect.height // 2))
+
+
+def draw_flashlight_hint():
+    """如果玩家持有手電筒，在左上角顯示目前開關狀態"""
+    if '老式手電筒' not in inventory:
+        return
+    status_text = "手電筒：開啟" if flashlight_on else "手電筒：關閉"
+    hint_text_surf = font_small.render(status_text, True, WHITE)
+    hint_rect = hint_text_surf.get_rect()
+    hint_bg_rect = pygame.Rect(0, 0, hint_rect.width + 20, hint_rect.height + 12)
+    hint_bg_rect.topleft = (15, 55)
+    hint_bg = pygame.Surface(hint_bg_rect.size, pygame.SRCALPHA)
+    hint_bg.fill((200, 160, 60, 170) if flashlight_on else (0, 0, 0, 150))
+    screen.blit(hint_bg, hint_bg_rect)
+    screen.blit(hint_text_surf, (hint_bg_rect.centerx - hint_rect.width // 2, hint_bg_rect.centery - hint_rect.height // 2))
+
+
+def draw_night_overlay():
+    """如果目前階段是晚上，在畫面上疊加一層半透明深藍色營造夜晚氛圍"""
+    if not DAY_NIGHT_STAGES[day_night_index].endswith('NIGHT'):
+        return
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill(NIGHT_OVERLAY_COLOR)
+    screen.blit(overlay, (0, 0))
+
+
+def draw_lights_out_overlay(camera_offset_x):
+    """列車燈光熄滅期間，疊加更深的黑暗效果；若手電筒開啟則照亮角色前方"""
+    if not lights_out:
+        return
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 210))
+
+    if flashlight_on and '老式手電筒' in inventory:
+        origin_x = conductor_rect.centerx - camera_offset_x
+        origin_y = conductor_rect.centery
+        direction = 1 if facing_direction == 'RIGHT' else -1
+        cone_length = 220
+        cone_half_width = 90
+
+        light_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        cone_points = [
+            (origin_x, origin_y - 20),
+            (origin_x + direction * cone_length, origin_y - cone_half_width),
+            (origin_x + direction * cone_length, origin_y + cone_half_width),
+            (origin_x, origin_y + 20),
+        ]
+        pygame.draw.polygon(light_surf, (255, 255, 255, 190), cone_points)
+        pygame.draw.circle(light_surf, (255, 255, 255, 210), (origin_x, origin_y), 45)
+        overlay.blit(light_surf, (0, 0), special_flags=pygame.BLEND_RGBA_SUB)
+
+    screen.blit(overlay, (0, 0))
+
+
+def draw_lights_out_hint():
+    """列車燈光熄滅期間，顯示「返回駕駛室」的任務指引"""
+    if not lights_out:
+        return
+    hint_text_surf = font_small.render("任務：返回駕駛室", True, WHITE)
+    hint_rect = hint_text_surf.get_rect()
+    hint_bg_rect = pygame.Rect(0, 0, hint_rect.width + 24, hint_rect.height + 14)
+    hint_bg_rect.midtop = (WIDTH // 2, 58)
+    hint_bg = pygame.Surface(hint_bg_rect.size, pygame.SRCALPHA)
+    hint_bg.fill((120, 0, 0, 190))
+    screen.blit(hint_bg, hint_bg_rect)
+    screen.blit(hint_text_surf, (hint_bg_rect.centerx - hint_rect.width // 2, hint_bg_rect.centery - hint_rect.height // 2))
+
+
+def draw_time_toggle_button():
+    """繪製目前天數／時段按鈕，點擊後依序切換到下一個階段"""
+    current_stage = DAY_NIGHT_STAGES[day_night_index]
+    is_night = current_stage.endswith('NIGHT')
+    button_color = (200, 160, 60) if is_night else (70, 90, 160)
+
+    pygame.draw.rect(screen, button_color, time_toggle_button_rect)
+    pygame.draw.rect(screen, BLACK, time_toggle_button_rect, 2)
+
+    label_surf = font_small.render(DAY_NIGHT_LABELS[current_stage], True, WHITE)
+    screen.blit(label_surf, (time_toggle_button_rect.centerx - label_surf.get_width() // 2,
+                             time_toggle_button_rect.centery - label_surf.get_height() // 2))
+
+
+def wrap_text(text, render_font, max_width):
+    """依照可用寬度，把文字切成一行一行的列表（超出寬度就換行）"""
+    lines = []
+    current_line = ""
+    for char in text:
+        test_line = current_line + char
+        if render_font.size(test_line)[0] <= max_width or not current_line:
+            current_line = test_line
+        else:
+            lines.append(current_line)
+            current_line = char
+    if current_line:
+        lines.append(current_line)
+    return lines
+
+
+def draw_dialogue_box():
+    """繪製對話框，顯示目前這句台詞（超過文字框寬度會自動換行）"""
+    speaker, text = dialogue_lines[dialogue_index]
+
+    box_width = WIDTH - 120
+    line_height = 32
+    lines = wrap_text(text, font, box_width - 40)
+    box_height = max(100, 55 + len(lines) * line_height + 15)
+    box_rect = pygame.Rect(60, HEIGHT - 40 - box_height, box_width, box_height)
+
+    pygame.draw.rect(screen, WHITE, box_rect)
+    pygame.draw.rect(screen, BLACK, box_rect, 3)
+
+    name_surf = font_small.render(speaker, True, SPEAKER_COLORS.get(speaker, BLACK))
+    screen.blit(name_surf, (box_rect.x + 20, box_rect.y + 12))
+
+    for i, line in enumerate(lines):
+        line_surf = font.render(line, True, BLACK)
+        screen.blit(line_surf, (box_rect.x + 20, box_rect.y + 45 + i * line_height))
+
+    hint_surf = font_small.render("F : 繼續", True, DARK_GRAY)
+    screen.blit(hint_surf, (box_rect.right - hint_surf.get_width() - 15, box_rect.bottom - hint_surf.get_height() - 10))
+
+
+def draw_night1_choice():
+    """繪製第一天晚上「開門／不開門」的選擇畫面"""
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 200))
+    screen.blit(overlay, (0, 0))
+
+    prompt_surf = font.render("要打開駕駛室的門嗎？", True, WHITE)
+    screen.blit(prompt_surf, (WIDTH // 2 - prompt_surf.get_width() // 2, HEIGHT // 2 - 60))
+
+    pygame.draw.rect(screen, RED, night1_choice_open_rect)
+    pygame.draw.rect(screen, BLACK, night1_choice_open_rect, 3)
+    open_surf = font_small.render("開門", True, WHITE)
+    screen.blit(open_surf, (night1_choice_open_rect.centerx - open_surf.get_width() // 2,
+                            night1_choice_open_rect.centery - open_surf.get_height() // 2))
+
+    pygame.draw.rect(screen, (70, 90, 160), night1_choice_close_rect)
+    pygame.draw.rect(screen, BLACK, night1_choice_close_rect, 3)
+    close_surf = font_small.render("不開門", True, WHITE)
+    screen.blit(close_surf, (night1_choice_close_rect.centerx - close_surf.get_width() // 2,
+                             night1_choice_close_rect.centery - close_surf.get_height() // 2))
+
+
+def draw_game_over_screen():
+    """繪製 Game Over 畫面"""
+    screen.fill(BLACK)
+
+    title_surf = font.render("GAME OVER", True, RED)
+    screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, HEIGHT // 2 - 60))
+
+    reason_surf = font_small.render("你打開了門，被那個「多出來的人」發現了。", True, WHITE)
+    screen.blit(reason_surf, (WIDTH // 2 - reason_surf.get_width() // 2, HEIGHT // 2))
+
+    hint_surf = font_small.render("按 R 重新開始", True, GRAY)
+    screen.blit(hint_surf, (WIDTH // 2 - hint_surf.get_width() // 2, HEIGHT // 2 + 40))
+
+
+def reset_game():
+    """重置遊戲進度，回到最初始狀態"""
+    global current_scene, game_state, camera_x
+    global day_night_index, day1_night_triggered, lights_out
+    global flashlight_on, facing_direction
+    global has_guide, has_girl_painting, active_npc, manual_view
+    global dialogue_lines, dialogue_index
+
+    conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - 160 - 10
+    conductor_rect.y = HEIGHT - FLOOR_HEIGHT - 160
+    current_scene = 'COCKPIT'
+    game_state = 'MANUAL'
+    camera_x = 0
+
+    day_night_index = 0
+    day1_night_triggered = False
+    lights_out = False
+    flashlight_on = False
+    facing_direction = 'RIGHT'
+
+    has_guide = False
+    has_girl_painting = False
+    active_npc = None
+    manual_view = 'MANUAL'
+    dialogue_lines = []
+    dialogue_index = 0
+
+    inventory.clear()
+
+    for spot in item_spots:
+        spot['collected'] = False
+
+    for item in console_items:
+        item['collected'] = False
+        item['sealed'] = (item['name'] == '《夜間行駛生存指南》')
+
+
 def draw_conductor(surface, rect, image, camera_offset_x):
     """繪製列車長"""
     # 根據攝影機位置計算角色在螢幕上的位置
@@ -269,10 +783,21 @@ def draw_conductor(surface, rect, image, camera_offset_x):
         pygame.draw.rect(surface, BLUE, screen_rect)
 
 def draw_interact_hint(camera_offset_x):
-    """如果玩家靠近可互動的門，在角色上方顯示按 F 互動的提示"""
+    """如果玩家靠近可互動的門或 NPC，在角色上方顯示按 F 互動的提示"""
     scene_doors = doors.get(current_scene, {})
-    for door_rect in scene_doors.values():
-        if conductor_rect.colliderect(door_rect):
+    interactables = list(scene_doors.values())
+    if current_scene == OLD_LADY_SCENE:
+        interactables.append(old_lady_rect)
+    if current_scene == GIRL_SCENE:
+        interactables.append(girl_rect)
+    for spot in item_spots:
+        if spot['scene'] == current_scene and not spot['collected']:
+            interactables.append(spot['rect'])
+    if current_scene == CONSOLE_FOCUS_SCENE:
+        interactables.append(console_cabinet_rect)
+
+    for target_rect in interactables:
+        if conductor_rect.colliderect(target_rect):
             hint_surf = font_small.render("F : 互動", True, WHITE)
             hint_bg = pygame.Surface((hint_surf.get_width() + 16, hint_surf.get_height() + 10), pygame.SRCALPHA)
             hint_bg.fill((0, 0, 0, 180))
@@ -293,10 +818,14 @@ while running:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_TAB:
                     game_state = 'PLAYING'
-            if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if close_button_rect.collidepoint(event.pos):
                     game_state = 'PLAYING'
-        
+                elif manual_tab_manual_rect.collidepoint(event.pos):
+                    manual_view = 'MANUAL'
+                elif has_guide and manual_tab_guide_rect.collidepoint(event.pos):
+                    manual_view = 'GUIDE'
+
         # 繪製背景遊戲畫面
         draw_background(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
@@ -312,7 +841,41 @@ while running:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_TAB:
                     game_state = 'MANUAL'
-                if event.key == pygame.K_f:
+                if event.key == pygame.K_b:
+                    game_state = 'INVENTORY'
+                if event.key == pygame.K_l and '老式手電筒' in inventory:
+                    flashlight_on = not flashlight_on
+                if event.key == pygame.K_f and current_scene == OLD_LADY_SCENE and conductor_rect.colliderect(old_lady_rect):
+                    # 與老太太互動，開始對話
+                    dialogue_lines = old_lady_dialogue
+                    dialogue_index = 0
+                    active_npc = 'OLD_LADY'
+                    game_state = 'DIALOGUE'
+                elif event.key == pygame.K_f and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_rect):
+                    # 與小女孩互動，開始對話
+                    dialogue_lines = girl_dialogue
+                    dialogue_index = 0
+                    active_npc = 'GIRL'
+                    game_state = 'DIALOGUE'
+                elif event.key == pygame.K_f and get_item_spot_at(current_scene, conductor_rect) is not None:
+                    # 撿拾道具
+                    item_spot = get_item_spot_at(current_scene, conductor_rect)
+                    inventory.extend(item_spot['items'])
+                    item_spot['collected'] = True
+                    dialogue_lines = [(" ", f"獲得了「{ '、'.join(item_spot['items']) }」。")]
+                    dialogue_index = 0
+                    active_npc = None
+                    game_state = 'DIALOGUE'
+                elif event.key == pygame.K_f and current_scene == CONSOLE_FOCUS_SCENE and conductor_rect.colliderect(console_cabinet_rect):
+                    # 聚焦查看操作台置物櫃細節
+                    game_state = 'CONSOLE_FOCUS'
+                elif event.key == pygame.K_f and lights_out and not flashlight_on and get_current_scene_door_at(conductor_rect) is not None:
+                    # 燈光熄滅時，手電筒沒開就無法開門
+                    dialogue_lines = [(" ", "太暗了，需要打開手電筒才能看清楚並打開這扇門。")]
+                    dialogue_index = 0
+                    active_npc = None
+                    game_state = 'DIALOGUE'
+                elif event.key == pygame.K_f:
                     # (場景切換邏輯...)
                     if current_scene == 'CARRIAGE_1':
                         if conductor_rect.colliderect(doors['CARRIAGE_1']['exit_door']):
@@ -340,6 +903,16 @@ while running:
                         if conductor_rect.colliderect(doors['COCKPIT']['exit_door']):
                             current_scene = 'CARRIAGE_1'
                             conductor_rect.x = doors['CARRIAGE_1']['cockpit_door'].right + 10
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if time_toggle_button_rect.collidepoint(event.pos):
+                    day_night_index = min(day_night_index + 1, len(DAY_NIGHT_STAGES) - 1)
+                    if DAY_NIGHT_STAGES[day_night_index] == 'DAY1_NIGHT' and not day1_night_triggered:
+                        # 觸發第一天晚上的劇情
+                        day1_night_triggered = True
+                        dialogue_lines = night1_intro_lines
+                        dialogue_index = 0
+                        active_npc = 'NIGHT1_INTRO'
+                        game_state = 'DIALOGUE'
 
         # B. 遊戲邏輯
         if 'CARRIAGE' in current_scene:
@@ -352,8 +925,10 @@ while running:
         keys = pygame.key.get_pressed()
         if keys[pygame.K_LEFT]:
             conductor_rect.x -= PLAYER_SPEED
+            facing_direction = 'LEFT'
         if keys[pygame.K_RIGHT]:
             conductor_rect.x += PLAYER_SPEED
+            facing_direction = 'RIGHT'
 
         if conductor_rect.left < 0:
             conductor_rect.left = 0
@@ -366,11 +941,156 @@ while running:
         if camera_x > current_world_width - WIDTH:
             camera_x = current_world_width - WIDTH
 
+        if lights_out and current_scene == 'COCKPIT':
+            # 玩家已返回駕駛室，接續播放敲門劇情
+            lights_out = False
+            dialogue_lines = night1_knock_lines
+            dialogue_index = 0
+            active_npc = 'NIGHT1_KNOCK'
+            game_state = 'DIALOGUE'
+
         # C. 畫面繪製
         draw_background(camera_x)
+        draw_old_lady(camera_x)
+        draw_girl(camera_x)
+        draw_item_spots(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_night_overlay()
+        draw_lights_out_overlay(camera_x)
         draw_interact_hint(camera_x)
         draw_manual_hint()
+        draw_inventory_hint()
+        draw_flashlight_hint()
+        draw_time_toggle_button()
+        draw_lights_out_hint()
+
+    elif game_state == 'DIALOGUE':
+        # --- 對話狀態的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_f or event.key == pygame.K_SPACE:
+                    dialogue_index += 1
+                    if dialogue_index >= len(dialogue_lines):
+                        if active_npc == 'GIRL':
+                            has_girl_painting = True
+                            inventory.append('小女孩的畫')
+                            active_npc = None
+                            game_state = 'PLAYING'
+                        elif active_npc == 'NIGHT1_INTRO':
+                            active_npc = None
+                            if current_scene == 'COCKPIT':
+                                # 已經在駕駛室，直接接續播放敲門劇情
+                                dialogue_lines = night1_knock_lines
+                                dialogue_index = 0
+                                active_npc = 'NIGHT1_KNOCK'
+                                game_state = 'DIALOGUE'
+                            else:
+                                # 不在駕駛室，任務指引為返回駕駛室
+                                lights_out = True
+                                game_state = 'PLAYING'
+                        elif active_npc == 'NIGHT1_KNOCK':
+                            active_npc = None
+                            game_state = 'NIGHT1_CHOICE'
+                        elif active_npc == 'NIGHT1_OUTRO':
+                            active_npc = None
+                            game_state = 'PLAYING'
+                        elif active_npc == 'NIGHT1_CAUGHT':
+                            active_npc = None
+                            game_state = 'GAME_OVER'
+                        else:
+                            active_npc = None
+                            game_state = 'PLAYING'
+
+        draw_background(camera_x)
+        draw_old_lady(camera_x)
+        draw_girl(camera_x)
+        draw_item_spots(camera_x)
+        draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_night_overlay()
+        if game_state == 'DIALOGUE':
+            draw_dialogue_box()
+        draw_inventory_hint()
+
+    elif game_state == 'NIGHT1_CHOICE':
+        # --- 第一天晚上「開門／不開門」選擇畫面的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if night1_choice_open_rect.collidepoint(event.pos):
+                    dialogue_lines = night1_lines_open
+                    dialogue_index = 0
+                    active_npc = 'NIGHT1_CAUGHT'
+                    game_state = 'DIALOGUE'
+                elif night1_choice_close_rect.collidepoint(event.pos):
+                    dialogue_lines = night1_lines_closed
+                    dialogue_index = 0
+                    active_npc = 'NIGHT1_OUTRO'
+                    game_state = 'DIALOGUE'
+
+        draw_background(camera_x)
+        draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_night_overlay()
+        if game_state == 'NIGHT1_CHOICE':
+            draw_night1_choice()
+
+    elif game_state == 'GAME_OVER':
+        # --- Game Over 畫面的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    reset_game()
+
+        draw_game_over_screen()
+
+    elif game_state == 'INVENTORY':
+        # --- 背包狀態的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_b or event.key == pygame.K_TAB:
+                    game_state = 'PLAYING'
+
+        draw_background(camera_x)
+        draw_old_lady(camera_x)
+        draw_girl(camera_x)
+        draw_item_spots(camera_x)
+        draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_night_overlay()
+        draw_inventory_screen()
+
+    elif game_state == 'CONSOLE_FOCUS':
+        # --- 操作台置物櫃細節畫面的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_f or event.key == pygame.K_ESCAPE:
+                    game_state = 'PLAYING'
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                for item in console_items:
+                    if item['collected'] or not item['rect'].collidepoint(event.pos):
+                        continue
+                    if item.get('sealed'):
+                        item['sealed'] = False # 撕開膠帶
+                    elif item['name'] == '《夜間行駛生存指南》':
+                        has_guide = True # 生存指南不放進背包，改成按 TAB 查看
+                        item['collected'] = True
+                    else:
+                        inventory.append(item['name'])
+                        item['collected'] = True
+                    break
+
+        draw_background(camera_x)
+        draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_night_overlay()
+        draw_console_focus()
+        draw_inventory_hint()
 
     # --- D. 更新畫面 ---
     pygame.display.flip()
