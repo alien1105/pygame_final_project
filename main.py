@@ -225,6 +225,13 @@ old_lady_dialogue = [
     ("老太太", "……"), # 她卻像沒說過這句話一樣
 ]
 
+# 已經聊過一次之後，再找她說話會改播這段
+old_lady_dialogue_repeat = [
+    ("老太太", "……"),
+]
+
+has_talked_to_old_lady = False # 是否已經完整聊過第一次對話
+
 # --- 小女孩 NPC ---
 GIRL_SCENE = 'CARRIAGE_2' # 她一個人坐在最後一節車廂
 girl_rect = pygame.Rect(410, HEIGHT - FLOOR_HEIGHT - 80, 50, 80) # 坐在車廂二的座位上
@@ -474,7 +481,7 @@ def draw_manual_screen():
         screen.blit(title_surf, (content_x, panel_rect.y + 20))
 
         instructions = [
-            "← → : 左右移動",
+            "← → / A D : 左右移動",
             "F : 與場景互動",
             "B : 開啟背包",
             "L : 開關手電筒（需持有手電筒）",
@@ -938,7 +945,7 @@ def reset_game():
     global current_scene, game_state, camera_x
     global day_night_index, day1_night_triggered, day1_night_resolved, day2_night_triggered, lights_out
     global flashlight_on, facing_direction
-    global has_guide, has_girl_painting, active_npc, manual_view
+    global has_guide, has_girl_painting, has_talked_to_old_lady, active_npc, manual_view
     global dialogue_lines, dialogue_index, game_over_reason
 
     conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - 160 - 10
@@ -958,6 +965,7 @@ def reset_game():
 
     has_guide = False
     has_girl_painting = False
+    has_talked_to_old_lady = False
     active_npc = None
     manual_view = 'MANUAL'
     dialogue_lines = []
@@ -1063,8 +1071,8 @@ while running:
                 if event.key == pygame.K_l and '老式手電筒' in inventory:
                     flashlight_on = not flashlight_on
                 if event.key == pygame.K_f and current_scene == OLD_LADY_SCENE and conductor_rect.colliderect(old_lady_rect):
-                    # 與老太太互動，開始對話
-                    dialogue_lines = old_lady_dialogue
+                    # 與老太太互動，開始對話（聊過一次之後改播重複對話）
+                    dialogue_lines = old_lady_dialogue_repeat if has_talked_to_old_lady else old_lady_dialogue
                     dialogue_index = 0
                     active_npc = 'OLD_LADY'
                     game_state = 'DIALOGUE'
@@ -1160,10 +1168,10 @@ while running:
             current_world_width = COCKPIT_WIDTH
 
         keys = pygame.key.get_pressed()
-        if keys[pygame.K_LEFT]:
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
             conductor_rect.x -= PLAYER_SPEED
             facing_direction = 'LEFT'
-        if keys[pygame.K_RIGHT]:
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
             conductor_rect.x += PLAYER_SPEED
             facing_direction = 'RIGHT'
 
@@ -1211,7 +1219,11 @@ while running:
                 if event.key == pygame.K_f or event.key == pygame.K_SPACE:
                     dialogue_index += 1
                     if dialogue_index >= len(dialogue_lines):
-                        if active_npc == 'GIRL':
+                        if active_npc == 'OLD_LADY':
+                            has_talked_to_old_lady = True
+                            active_npc = None
+                            game_state = 'PLAYING'
+                        elif active_npc == 'GIRL':
                             if not has_girl_painting:
                                 has_girl_painting = True
                                 inventory.append('小女孩的畫')
