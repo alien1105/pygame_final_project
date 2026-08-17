@@ -101,6 +101,13 @@ night1_knock_lines = [
     ("旁白", "叩。叩。叩。有人在敲駕駛室門。"),
 ]
 
+night1_lines_no_flashlight = [ # 沒有手電筒，無法在黑暗中返回駕駛室
+    ("旁白", "四周一片漆黑，你完全看不清任何東西。"),
+    ("旁白", "你伸手在黑暗中摸索，想找到回駕駛室的路——"),
+    ("旁白", "但沒有光，你什麼都找不到。"),
+    ("旁白", "你聽見腳步聲，從四面八方逐漸逼近。"),
+]
+
 night1_lines_closed = [ # 選擇「不開門」後的劇情
     ("旁白", "你沒有開門。幾秒後，敲門聲停止了。"),
     ("旁白", "列車離開隧道，燈恢復正常。"),
@@ -1173,6 +1180,12 @@ while running:
                                 dialogue_index = 0
                                 active_npc = 'NIGHT1_KNOCK'
                                 game_state = 'DIALOGUE'
+                            elif '老式手電筒' not in inventory:
+                                # 沒有手電筒，無法在黑暗中找到回駕駛室的路
+                                dialogue_lines = night1_lines_no_flashlight
+                                dialogue_index = 0
+                                active_npc = 'NIGHT1_NO_FLASHLIGHT'
+                                game_state = 'DIALOGUE'
                             else:
                                 # 不在駕駛室，任務指引為返回駕駛室
                                 lights_out = True
@@ -1180,6 +1193,10 @@ while running:
                         elif active_npc == 'NIGHT1_KNOCK':
                             active_npc = None
                             game_state = 'NIGHT1_CHOICE'
+                        elif active_npc == 'NIGHT1_NO_FLASHLIGHT':
+                            active_npc = None
+                            game_over_reason = "沒有手電筒，你在黑暗中迷失了方向……"
+                            game_state = 'GAME_OVER'
                         elif active_npc == 'NIGHT1_OUTRO':
                             active_npc = None
                             day1_night_resolved = True
