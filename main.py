@@ -10,7 +10,7 @@ CARRIAGE_WIDTH = 1600 # 車廂場景的寬度
 COCKPIT_WIDTH = 500 # 駕駛艙場景的寬度
 CONNECTION_WIDTH = 400 # 連接處場景的寬度
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("列車長模擬器")
+pygame.display.set_caption("軌遇")
 
 # 遊戲常數
 FLOOR_HEIGHT = 50
@@ -38,6 +38,7 @@ NIGHT_OVERLAY_COLOR = (10, 10, 40, 140) # 夜晚時疊加的半透明深藍色
 # 載入字型 (使用電腦內建的中文字型)
 font = pygame.font.SysFont("microsoftjhenghei", 28)
 font_small = pygame.font.SysFont("microsoftjhenghei", 20)
+font_title = pygame.font.SysFont("microsoftjhenghei", 64)
 
 # 3. 載入並設定列車長
 try:
@@ -68,8 +69,11 @@ camera_x = 0
 current_scene = 'COCKPIT' # 遊戲從駕駛艙開始
 
 # --- 遊戲狀態管理 ---
-game_state = 'MANUAL' # 初始狀態為顯示手冊
+game_state = 'START' # 初始狀態為遊戲開始畫面
 close_button_rect = pygame.Rect(WIDTH - 50, 50, 30, 30) # 手冊的關閉按鈕
+
+# --- 開始畫面 ---
+start_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 60, 200, 55) # 開始遊戲按鈕
 
 # --- 天數／白天晚上切換（依序循環：第一天白天 → 第一天晚上 → 第二天白天 → 第二天晚上）---
 DAY_NIGHT_STAGES = ['DAY1_DAY', 'DAY1_NIGHT', 'DAY2_DAY', 'DAY2_NIGHT']
@@ -387,6 +391,27 @@ console_items = [
 def console_has_items_left():
     """置物櫃裡是否還有尚未拾取的道具"""
     return any(not item['collected'] for item in console_items)
+
+
+def draw_start_screen():
+    """繪製遊戲開始畫面"""
+    screen.fill(BLACK)
+
+    title_surf = font_title.render("軌遇", True, WHITE)
+    screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, HEIGHT // 2 - 130))
+
+    #subtitle_surf = font_small.render("列車長模擬器", True, GRAY)
+    #screen.blit(subtitle_surf, (WIDTH // 2 - subtitle_surf.get_width() // 2, HEIGHT // 2 - 55))
+
+    pygame.draw.rect(screen, RED, start_button_rect)
+    pygame.draw.rect(screen, WHITE, start_button_rect, 3)
+    start_text_surf = font.render("開始遊戲", True, WHITE)
+    screen.blit(start_text_surf, (start_button_rect.centerx - start_text_surf.get_width() // 2,
+                                  start_button_rect.centery - start_text_surf.get_height() // 2))
+
+    hint_surf = font_small.render("按 Enter 或點擊開始", True, GRAY)
+    screen.blit(hint_surf, (WIDTH // 2 - hint_surf.get_width() // 2, start_button_rect.bottom + 20))
+
 
 def draw_manual_screen():
     """繪製手冊畫面，左側頁籤可切換操作手冊／生存指南"""
@@ -914,7 +939,7 @@ def reset_game():
     conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - 160 - 10
     conductor_rect.y = HEIGHT - FLOOR_HEIGHT - 160
     current_scene = 'COCKPIT'
-    game_state = 'MANUAL'
+    game_state = 'START'
     camera_x = 0
 
     day_night_index = 0
@@ -983,7 +1008,21 @@ def draw_interact_hint(camera_offset_x):
 # 4. 遊戲主迴圈
 running = True
 while running:
-    if game_state == 'MANUAL':
+    if game_state == 'START':
+        # --- 開始畫面的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    game_state = 'MANUAL'
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if start_button_rect.collidepoint(event.pos):
+                    game_state = 'MANUAL'
+
+        draw_start_screen()
+
+    elif game_state == 'MANUAL':
         # --- 手冊狀態的事件與繪圖 ---
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
