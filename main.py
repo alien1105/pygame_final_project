@@ -40,17 +40,83 @@ font = pygame.font.SysFont("microsoftjhenghei", 28)
 font_small = pygame.font.SysFont("microsoftjhenghei", 20)
 font_title = pygame.font.SysFont("microsoftjhenghei", 64)
 
-# 3. 載入並設定列車長
+# 3. 載入並設定列車長（走路動畫）
+CONDUCTOR_WALK_CROP = (713, 74, 1261, 1054) # main_character_walk2.gif 裡角色的裁切範圍 (left, top, right, bottom)，貼齊腳底，避免角色浮空
+conductor_walk_frames = []    # 走路動畫的每一張畫格 (pygame Surface)
+conductor_walk_durations = [] # 每一張畫格要停留的毫秒數
+conductor_img = None          # 靜止不動時顯示的畫面（走路動畫的第一格，或備用的靜態圖片）
 try:
-    # 載入圖片，convert_alpha() 會轉換圖片格式以優化繪製速度並處理透明度
-    conductor_img_original = pygame.image.load('main_character.png').convert_alpha()
-    # 調整圖片大小以符合我們的角色尺寸 (160x160)
-    conductor_img = pygame.transform.scale(conductor_img_original, (160, 160))
+    from PIL import Image
+    import numpy as np
+    from scipy import ndimage
+
+    gif = Image.open('main_character_walk2.gif')
+    crop_w = CONDUCTOR_WALK_CROP[2] - CONDUCTOR_WALK_CROP[0]
+    crop_h = CONDUCTOR_WALK_CROP[3] - CONDUCTOR_WALK_CROP[1]
+    scaled_h = 160
+    scaled_w = max(1, round(scaled_h * crop_w / crop_h)) # 維持長寬比例，避免角色被拉扁
+    for i in range(gif.n_frames):
+        gif.seek(i)
+        frame_rgba = gif.convert('RGBA').crop(CONDUCTOR_WALK_CROP)
+        arr = np.array(frame_rgba)
+        # GIF 背景是不透明的淺灰色攝影棚背景，沒有真正的透明資訊。
+        # 先用「明亮且低飽和度」找出背景像素，再只保留夠大的連通區域（濾掉角色身上零星的亮點雜訊），
+        # 最後把乾淨的背景範圍向外擴張兩圈，吃掉邊緣殘留的淺色鑲邊，讓輪廓更乾淨。
+        maxc = arr[:, :, :3].max(axis=2).astype(np.int16)
+        minc = arr[:, :, :3].min(axis=2).astype(np.int16)
+        brightness = arr[:, :, :3].mean(axis=2)
+        saturation = maxc - minc
+        background = (brightness > 100) & (saturation < 50)
+        labeled, num_components = ndimage.label(background)
+        if num_components > 0:
+            sizes = ndimage.sum(background, labeled, range(1, num_components + 1))
+            large_components = [idx + 1 for idx, size in enumerate(sizes) if size > 20]
+            background = np.isin(labeled, large_components)
+            background = ndimage.binary_dilation(background, iterations=2)
+        arr[background, 3] = 0
+        frame_surf = pygame.image.frombuffer(arr.tobytes(), (arr.shape[1], arr.shape[0]), 'RGBA').convert_alpha()
+        frame_surf = pygame.transform.smoothscale(frame_surf, (scaled_w, scaled_h))
+        # 貼到 160x160 的透明畫布中央，維持與其他場景元素一致的角色尺寸
+        canvas = pygame.Surface((160, 160), pygame.SRCALPHA)
+        canvas.blit(frame_surf, ((160 - scaled_w) // 2, 0))
+        conductor_walk_frames.append(canvas)
+        conductor_walk_durations.append(gif.info.get('duration', 80))
+    conductor_img = conductor_walk_frames[0]
+except Exception as e:
+    print(f"無法載入圖片 'main_character_walk2.gif': {e}")
+    print("請確認 'main_character_walk2.gif' 與 main.py 在同一個資料夾中，且已安裝 Pillow 與 numpy。")
+    print("將改用 'main_character.png' 靜態圖片作為替代。")
+    conductor_walk_frames = []
+    conductor_walk_durations = []
+    try:
+        conductor_img_original = pygame.image.load('main_character.png').convert_alpha()
+        conductor_img = pygame.transform.scale(conductor_img_original, (160, 160))
+    except pygame.error as e2:
+        print(f"無法載入圖片 'main_character.png': {e2}")
+        print("將使用藍色方塊作為替代。")
+        conductor_img = None
+
+# 載入開始畫面的背景圖片
+try:
+    cover_img_original = pygame.image.load('cover.png').convert()
+    cover_img = pygame.transform.scale(cover_img_original, (WIDTH, HEIGHT))
 except pygame.error as e:
-    print(f"無法載入圖片 'main_character.png': {e}")
-    print("請確認 'main_character.png' 檔案與 main.py 在同一個資料夾中。")
-    print("將使用藍色方塊作為替代。")
-    conductor_img = None # 如果圖片載入失敗，設定為 None
+    print(f"無法載入圖片 'cover.png': {e}")
+    print("請確認 'cover.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將使用黑色背景作為替代。")
+    cover_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入開始畫面的標題圖片
+try:
+    title_img_original = pygame.image.load('title.png').convert_alpha()
+    TITLE_IMG_WIDTH = 280
+    title_img_height = round(TITLE_IMG_WIDTH * title_img_original.get_height() / title_img_original.get_width())
+    title_img = pygame.transform.smoothscale(title_img_original, (TITLE_IMG_WIDTH, title_img_height))
+except pygame.error as e:
+    print(f"無法載入圖片 'title.png': {e}")
+    print("請確認 'title.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用文字標題作為替代。")
+    title_img = None # 如果圖片載入失敗，設定為 None
 
 # 設定列車長的碰撞框 (Rect)
 conductor_rect = pygame.Rect(
@@ -94,6 +160,10 @@ lights_out = False # 列車燈光是否熄滅中，此時任務指引是返回�
 # --- 手電筒 ---
 flashlight_on = False # 手電筒是否開啟中（需持有「老式手電筒」才能開關）
 facing_direction = 'RIGHT' # 角色目前面向，決定手電筒照亮的方向
+
+# --- 走路動畫 ---
+conductor_anim_index = 0 # 目前播放到走路動畫的第幾格
+conductor_anim_timer = 0 # 累積經過的毫秒數，用來判斷何時切換下一格
 
 night1_intro_lines = [
     ("旁白", "主角第一次執行夜班，一開始一切正常。"),
@@ -407,10 +477,19 @@ def console_has_items_left():
 
 def draw_start_screen():
     """繪製遊戲開始畫面"""
-    screen.fill(BLACK)
+    if cover_img:
+        screen.blit(cover_img, (0, 0))
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 120))
+        screen.blit(overlay, (0, 0))
+    else:
+        screen.fill(BLACK)
 
-    title_surf = font_title.render("軌遇", True, WHITE)
-    screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, HEIGHT // 2 - 130))
+    if title_img:
+        screen.blit(title_img, (WIDTH // 2 - title_img.get_width() // 2, 35))
+    else:
+        title_surf = font_title.render("軌遇", True, WHITE)
+        screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, HEIGHT // 2 - 130))
 
     #subtitle_surf = font_small.render("列車長模擬器", True, GRAY)
     #screen.blit(subtitle_surf, (WIDTH // 2 - subtitle_surf.get_width() // 2, HEIGHT // 2 - 55))
@@ -1019,6 +1098,7 @@ def draw_interact_hint(camera_offset_x):
             break
 
 # 4. 遊戲主迴圈
+dt = 0 # 每一幀經過的毫秒數，供走路動畫計時使用
 running = True
 while running:
     if game_state == 'START':
@@ -1168,17 +1248,35 @@ while running:
             current_world_width = COCKPIT_WIDTH
 
         keys = pygame.key.get_pressed()
+        is_moving = False
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
             conductor_rect.x -= PLAYER_SPEED
             facing_direction = 'LEFT'
+            is_moving = True
         if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
             conductor_rect.x += PLAYER_SPEED
             facing_direction = 'RIGHT'
+            is_moving = True
 
         if conductor_rect.left < 0:
             conductor_rect.left = 0
         if conductor_rect.right > current_world_width:
             conductor_rect.right = current_world_width
+
+        # 更新走路動畫（GIF 裡的角色本來就面向左邊，面向右邊時要水平翻轉）
+        if conductor_walk_frames:
+            if is_moving:
+                conductor_anim_timer += dt
+                current_duration = conductor_walk_durations[conductor_anim_index]
+                if conductor_anim_timer >= current_duration:
+                    conductor_anim_timer -= current_duration
+                    conductor_anim_index = (conductor_anim_index + 1) % len(conductor_walk_frames)
+            else:
+                conductor_anim_index = 0
+                conductor_anim_timer = 0
+
+            current_frame = conductor_walk_frames[conductor_anim_index]
+            conductor_img = pygame.transform.flip(current_frame, True, False) if facing_direction == 'RIGHT' else current_frame
 
         camera_x = conductor_rect.centerx - (WIDTH // 2)
         if camera_x < 0:
@@ -1401,9 +1499,9 @@ while running:
 
     # --- D. 更新畫面 ---
     pygame.display.flip()
-    
-    # 設定遊戲幀率 (Frame Rate) 為 60 FPS
-    clock.tick(FPS)
+
+    # 設定遊戲幀率 (Frame Rate) 為 60 FPS，並記錄這一幀經過的毫秒數供動畫使用
+    dt = clock.tick(FPS)
 
 # 離開遊戲
 pygame.quit()
