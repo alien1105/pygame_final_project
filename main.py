@@ -31,6 +31,7 @@ RED = (255, 0, 0) # 按鈕顏色
 GREEN = (0, 255, 0) # 按鈕顏色
 PURPLE = (150, 100, 150) # 老太太用紫色方塊代表
 PINK = (230, 160, 190) # 小女孩用粉色方塊代表
+GOLD = (218, 165, 32) # 可拾取道具標記顏色
 
 # 載入字型 (使用電腦內建的中文字型)
 font = pygame.font.SysFont("microsoftjhenghei", 28)
@@ -128,6 +129,56 @@ dialogue_index = 0
 active_npc = None # 記錄目前正在對話的 NPC，用於對話結束後觸發後續事件
 has_girl_painting = False # 是否已從小女孩手中取得畫
 
+# --- 第一天白天可收集道具 ---
+inventory = [] # 玩家背包，存放已取得的道具名稱
+
+# 每個道具點的位置定義：所在場景、可互動範圍、內含道具、是否已被拾取
+item_spots = [
+    {
+        'scene': 'CARRIAGE_1',
+        'rect': pygame.Rect(840, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 60, DOOR_HEIGHT), # 車廂座位上
+        'items': ['舊車票'],
+        'collected': False,
+    },
+    {
+        'scene': 'CONNECTION',
+        'rect': pygame.Rect(30, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 70, DOOR_HEIGHT), # 連接處牆壁上
+        'items': ['舊路線圖'],
+        'collected': False,
+    },
+]
+
+
+def get_item_spot_at(scene, rect):
+    """回傳玩家目前所在位置可拾取、且尚未拾取的道具點（沒有則回傳 None）"""
+    for spot in item_spots:
+        if not spot['collected'] and spot['scene'] == scene and rect.colliderect(spot['rect']):
+            return spot
+    return None
+
+
+# --- 駕駛艙操作台細節（按 F 進入細節畫面，用滑鼠點擊個別拾取）---
+CONSOLE_FOCUS_SCENE = 'COCKPIT'
+console_cabinet_rect = pygame.Rect(30, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 100, DOOR_HEIGHT) # 操作台下置物櫃
+
+console_panel_rect = pygame.Rect(WIDTH // 2 - 300, HEIGHT // 2 - 150, 600, 300)
+_console_slot_size = 160
+_console_slot_gap = 20
+_console_slots_total_width = _console_slot_size * 3 + _console_slot_gap * 2
+_console_slot_start_x = console_panel_rect.centerx - _console_slots_total_width // 2
+_console_slot_y = console_panel_rect.y + 90
+
+console_items = [
+    {'name': '老式手電筒', 'color': (200, 200, 80), 'rect': pygame.Rect(_console_slot_start_x, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False},
+    {'name': '車站鑰匙', 'color': (190, 190, 190), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap), _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False},
+    {'name': '維修員留下的螺絲起子', 'color': (150, 110, 70), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap) * 2, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False},
+]
+
+
+def console_has_items_left():
+    """置物櫃裡是否還有尚未拾取的道具"""
+    return any(not item['collected'] for item in console_items)
+
 def draw_manual_screen():
     """繪製操作手冊畫面"""
     # 半透明背景
@@ -148,6 +199,7 @@ def draw_manual_screen():
     instructions = [
         "← → : 左右移動",
         "F : 與場景互動",
+        "B : 開啟背包",
         "TAB : 關閉此手冊"
     ]
     for i, text in enumerate(instructions):
@@ -320,6 +372,93 @@ def draw_girl(camera_offset_x):
     pygame.draw.circle(screen, PINK, (screen_rect.centerx, screen_rect.top - 12), 12) # 頭部
 
 
+def draw_inventory_screen():
+    """繪製背包畫面，列出已拾取的道具"""
+    # 半透明背景
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 180))
+    screen.blit(overlay, (0, 0))
+
+    # 背包面板
+    panel_rect = pygame.Rect(WIDTH // 2 - 250, HEIGHT // 2 - 150, 500, 300)
+    pygame.draw.rect(screen, WHITE, panel_rect)
+    pygame.draw.rect(screen, BLACK, panel_rect, 3)
+
+    # 標題
+    title_surf = font.render("背包", True, BLACK)
+    screen.blit(title_surf, (panel_rect.centerx - title_surf.get_width() // 2, panel_rect.y + 20))
+
+    if inventory:
+        for i, item_name in enumerate(inventory):
+            item_surf = font_small.render(f"・{item_name}", True, BLACK)
+            screen.blit(item_surf, (panel_rect.x + 40, panel_rect.y + 70 + i * 32))
+    else:
+        empty_surf = font_small.render("目前沒有任何道具。", True, DARK_GRAY)
+        screen.blit(empty_surf, (panel_rect.x + 40, panel_rect.y + 70))
+
+    hint_surf = font_small.render("B : 關閉背包", True, DARK_GRAY)
+    screen.blit(hint_surf, (panel_rect.right - hint_surf.get_width() - 20, panel_rect.bottom - hint_surf.get_height() - 15))
+
+
+def draw_item_spots(camera_offset_x):
+    """繪製目前場景中尚未拾取的道具標記"""
+    for spot in item_spots:
+        if spot['scene'] != current_scene or spot['collected']:
+            continue
+        marker_rect = pygame.Rect(0, 0, 26, 26)
+        marker_rect.center = (spot['rect'].centerx - camera_offset_x, HEIGHT - FLOOR_HEIGHT - 30)
+        pygame.draw.rect(screen, GOLD, marker_rect)
+        pygame.draw.rect(screen, BLACK, marker_rect, 2)
+
+    if current_scene == CONSOLE_FOCUS_SCENE and console_has_items_left():
+        marker_rect = pygame.Rect(0, 0, 26, 26)
+        marker_rect.center = (console_cabinet_rect.centerx - camera_offset_x, HEIGHT - FLOOR_HEIGHT - 30)
+        pygame.draw.rect(screen, GOLD, marker_rect)
+        pygame.draw.rect(screen, BLACK, marker_rect, 2)
+
+
+def draw_console_focus():
+    """繪製操作台置物櫃的細節畫面，可用滑鼠點擊個別拾取道具"""
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 200))
+    screen.blit(overlay, (0, 0))
+
+    pygame.draw.rect(screen, DARK_GRAY, console_panel_rect)
+    pygame.draw.rect(screen, BLACK, console_panel_rect, 3)
+
+    title_surf = font.render("置物櫃", True, WHITE)
+    screen.blit(title_surf, (console_panel_rect.centerx - title_surf.get_width() // 2, console_panel_rect.y + 15))
+
+    for item in console_items:
+        slot_rect = item['rect']
+        if item['collected']:
+            pygame.draw.rect(screen, GRAY, slot_rect)
+            pygame.draw.rect(screen, DARK_GRAY, slot_rect, 3)
+            label = "(已拾取)"
+        else:
+            pygame.draw.rect(screen, item['color'], slot_rect)
+            pygame.draw.rect(screen, BLACK, slot_rect, 3)
+            label = item['name']
+
+        label_surf = font_small.render(label, True, WHITE)
+        screen.blit(label_surf, (slot_rect.centerx - label_surf.get_width() // 2, slot_rect.bottom + 10))
+
+    hint_surf = font_small.render("點擊道具拾取・F : 離開細節畫面", True, WHITE)
+    screen.blit(hint_surf, (console_panel_rect.centerx - hint_surf.get_width() // 2, console_panel_rect.bottom - 30))
+
+
+def draw_inventory_hint():
+    """在左上角顯示目前背包內的道具數量"""
+    hint_text_surf = font_small.render(f"背包 : {len(inventory)}", True, WHITE)
+    hint_rect = hint_text_surf.get_rect()
+    hint_bg_rect = pygame.Rect(0, 0, hint_rect.width + 20, hint_rect.height + 12)
+    hint_bg_rect.topleft = (15, 15)
+    hint_bg = pygame.Surface(hint_bg_rect.size, pygame.SRCALPHA)
+    hint_bg.fill((0, 0, 0, 150))
+    screen.blit(hint_bg, hint_bg_rect)
+    screen.blit(hint_text_surf, (hint_bg_rect.centerx - hint_rect.width // 2, hint_bg_rect.centery - hint_rect.height // 2))
+
+
 def draw_dialogue_box():
     """繪製對話框，顯示目前這句台詞"""
     speaker, text = dialogue_lines[dialogue_index]
@@ -356,6 +495,11 @@ def draw_interact_hint(camera_offset_x):
         interactables.append(old_lady_rect)
     if current_scene == GIRL_SCENE:
         interactables.append(girl_rect)
+    for spot in item_spots:
+        if spot['scene'] == current_scene and not spot['collected']:
+            interactables.append(spot['rect'])
+    if current_scene == CONSOLE_FOCUS_SCENE:
+        interactables.append(console_cabinet_rect)
 
     for target_rect in interactables:
         if conductor_rect.colliderect(target_rect):
@@ -398,6 +542,8 @@ while running:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_TAB:
                     game_state = 'MANUAL'
+                if event.key == pygame.K_b:
+                    game_state = 'INVENTORY'
                 if event.key == pygame.K_f and current_scene == OLD_LADY_SCENE and conductor_rect.colliderect(old_lady_rect):
                     # 與老太太互動，開始對話
                     dialogue_lines = old_lady_dialogue
@@ -410,6 +556,18 @@ while running:
                     dialogue_index = 0
                     active_npc = 'GIRL'
                     game_state = 'DIALOGUE'
+                elif event.key == pygame.K_f and get_item_spot_at(current_scene, conductor_rect) is not None:
+                    # 撿拾道具
+                    item_spot = get_item_spot_at(current_scene, conductor_rect)
+                    inventory.extend(item_spot['items'])
+                    item_spot['collected'] = True
+                    dialogue_lines = [(" ", f"獲得了「{ '、'.join(item_spot['items']) }」。")]
+                    dialogue_index = 0
+                    active_npc = None
+                    game_state = 'DIALOGUE'
+                elif event.key == pygame.K_f and current_scene == CONSOLE_FOCUS_SCENE and conductor_rect.colliderect(console_cabinet_rect):
+                    # 聚焦查看操作台置物櫃細節
+                    game_state = 'CONSOLE_FOCUS'
                 elif event.key == pygame.K_f:
                     # (場景切換邏輯...)
                     if current_scene == 'CARRIAGE_1':
@@ -468,9 +626,11 @@ while running:
         draw_background(camera_x)
         draw_old_lady(camera_x)
         draw_girl(camera_x)
+        draw_item_spots(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
         draw_interact_hint(camera_x)
         draw_manual_hint()
+        draw_inventory_hint()
 
     elif game_state == 'DIALOGUE':
         # --- 對話狀態的事件與繪圖 ---
@@ -483,15 +643,54 @@ while running:
                     if dialogue_index >= len(dialogue_lines):
                         if active_npc == 'GIRL':
                             has_girl_painting = True
+                            inventory.append('小女孩的畫')
                         active_npc = None
                         game_state = 'PLAYING'
 
         draw_background(camera_x)
         draw_old_lady(camera_x)
         draw_girl(camera_x)
+        draw_item_spots(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
         if game_state == 'DIALOGUE':
             draw_dialogue_box()
+        draw_inventory_hint()
+
+    elif game_state == 'INVENTORY':
+        # --- 背包狀態的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_b or event.key == pygame.K_TAB:
+                    game_state = 'PLAYING'
+
+        draw_background(camera_x)
+        draw_old_lady(camera_x)
+        draw_girl(camera_x)
+        draw_item_spots(camera_x)
+        draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_inventory_screen()
+
+    elif game_state == 'CONSOLE_FOCUS':
+        # --- 操作台置物櫃細節畫面的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_f or event.key == pygame.K_ESCAPE:
+                    game_state = 'PLAYING'
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                for item in console_items:
+                    if not item['collected'] and item['rect'].collidepoint(event.pos):
+                        inventory.append(item['name'])
+                        item['collected'] = True
+                        break
+
+        draw_background(camera_x)
+        draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_console_focus()
+        draw_inventory_hint()
 
     # --- D. 更新畫面 ---
     pygame.display.flip()
