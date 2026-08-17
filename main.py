@@ -32,6 +32,8 @@ GREEN = (0, 255, 0) # 按鈕顏色
 PURPLE = (150, 100, 150) # 老太太用紫色方塊代表
 PINK = (230, 160, 190) # 小女孩用粉色方塊代表
 GOLD = (218, 165, 32) # 可拾取道具標記顏色
+TAPE_COLOR = (222, 184, 135) # 封住暗格的膠帶顏色
+NIGHT_OVERLAY_COLOR = (10, 10, 40, 140) # 夜晚時疊加的半透明深藍色
 
 # 載入字型 (使用電腦內建的中文字型)
 font = pygame.font.SysFont("microsoftjhenghei", 28)
@@ -128,6 +130,21 @@ dialogue_lines = []
 dialogue_index = 0
 active_npc = None # 記錄目前正在對話的 NPC，用於對話結束後觸發後續事件
 has_girl_painting = False # 是否已從小女孩手中取得畫
+has_guide = False # 是否已取得《夜間行駛生存指南》，取得後可在手冊畫面切換查看
+
+# --- 手冊畫面（含左側頁籤，可切換操作手冊／生存指南）---
+manual_view = 'MANUAL' # 目前手冊畫面顯示的頁籤：MANUAL 操作手冊 / GUIDE 生存指南
+manual_panel_rect = pygame.Rect(WIDTH // 2 - 350, HEIGHT // 2 - 160, 700, 320)
+manual_sidebar_width = 160
+manual_tab_manual_rect = pygame.Rect(manual_panel_rect.x + 15, manual_panel_rect.y + 70, manual_sidebar_width - 30, 50)
+manual_tab_guide_rect = pygame.Rect(manual_panel_rect.x + 15, manual_panel_rect.y + 130, manual_sidebar_width - 30, 50)
+
+# 《夜間行駛生存指南》第一頁的前三條規則，格式為 (規則標題, 規則內容, 補充說明)
+guide_rules = [
+    ("規則一", "夜間駕駛時，看到月台有人，不要鳴笛。", "因為那個人不一定是在等車。"),
+    ("規則二", "列車進入隧道後，如果車廂燈熄滅，不要離開駕駛室。", "不管你聽見什麼。"),
+    ("規則三", "凌晨 00:17，不要查看後視鏡。", "如果已經看了，不要數車廂裡有幾個人。"),
+]
 
 # --- 第一天白天可收集道具 ---
 inventory = [] # 玩家背包，存放已取得的道具名稱
@@ -161,17 +178,18 @@ def get_item_spot_at(scene, rect):
 CONSOLE_FOCUS_SCENE = 'COCKPIT'
 console_cabinet_rect = pygame.Rect(30, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 100, DOOR_HEIGHT) # 操作台下置物櫃
 
-console_panel_rect = pygame.Rect(WIDTH // 2 - 300, HEIGHT // 2 - 150, 600, 300)
-_console_slot_size = 160
-_console_slot_gap = 20
-_console_slots_total_width = _console_slot_size * 3 + _console_slot_gap * 2
+console_panel_rect = pygame.Rect(WIDTH // 2 - 330, HEIGHT // 2 - 160, 660, 320)
+_console_slot_size = 130
+_console_slot_gap = 15
+_console_slots_total_width = _console_slot_size * 4 + _console_slot_gap * 3
 _console_slot_start_x = console_panel_rect.centerx - _console_slots_total_width // 2
 _console_slot_y = console_panel_rect.y + 90
 
 console_items = [
-    {'name': '老式手電筒', 'color': (200, 200, 80), 'rect': pygame.Rect(_console_slot_start_x, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False},
-    {'name': '車站鑰匙', 'color': (190, 190, 190), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap), _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False},
-    {'name': '維修員留下的螺絲起子', 'color': (150, 110, 70), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap) * 2, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False},
+    {'name': '老式手電筒', 'color': (200, 200, 80), 'rect': pygame.Rect(_console_slot_start_x, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': False},
+    {'name': '車站鑰匙', 'color': (190, 190, 190), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap), _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': False},
+    {'name': '維修員留下的螺絲起子', 'color': (150, 110, 70), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap) * 2, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': False},
+    {'name': '《夜間行駛生存指南》', 'color': (90, 60, 40), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap) * 3, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': True},
 ]
 
 
@@ -180,31 +198,69 @@ def console_has_items_left():
     return any(not item['collected'] for item in console_items)
 
 def draw_manual_screen():
-    """繪製操作手冊畫面"""
+    """繪製手冊畫面，左側頁籤可切換操作手冊／生存指南"""
     # 半透明背景
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 180))
     screen.blit(overlay, (0, 0))
 
-    # 手冊面板
-    panel_rect = pygame.Rect(WIDTH // 2 - 250, HEIGHT // 2 - 150, 500, 300)
+    panel_rect = manual_panel_rect
     pygame.draw.rect(screen, WHITE, panel_rect)
     pygame.draw.rect(screen, BLACK, panel_rect, 3)
 
-    # 標題
-    title_surf = font.render("操作手冊", True, BLACK)
-    screen.blit(title_surf, (panel_rect.centerx - title_surf.get_width() // 2, panel_rect.y + 20))
+    # 左側頁籤側欄
+    sidebar_rect = pygame.Rect(panel_rect.x, panel_rect.y, manual_sidebar_width, panel_rect.height)
+    pygame.draw.rect(screen, GRAY, sidebar_rect)
+    pygame.draw.line(screen, BLACK, (sidebar_rect.right, panel_rect.y), (sidebar_rect.right, panel_rect.bottom), 3)
 
-    # 說明文字
-    instructions = [
-        "← → : 左右移動",
-        "F : 與場景互動",
-        "B : 開啟背包",
-        "TAB : 關閉此手冊"
-    ]
-    for i, text in enumerate(instructions):
-        text_surf = font_small.render(text, True, BLACK)
-        screen.blit(text_surf, (panel_rect.x + 40, panel_rect.y + 80 + i * 40))
+    # 「操作手冊」頁籤
+    pygame.draw.rect(screen, WHITE if manual_view == 'MANUAL' else GRAY, manual_tab_manual_rect)
+    pygame.draw.rect(screen, BLACK, manual_tab_manual_rect, 2)
+    tab_manual_surf = font_small.render("操作手冊", True, BLACK)
+    screen.blit(tab_manual_surf, (manual_tab_manual_rect.centerx - tab_manual_surf.get_width() // 2,
+                                  manual_tab_manual_rect.centery - tab_manual_surf.get_height() // 2))
+
+    # 「生存指南」頁籤（取得指南後才會出現）
+    if has_guide:
+        tab_guide_bg = WHITE if manual_view == 'GUIDE' else GRAY
+        pygame.draw.rect(screen, tab_guide_bg, manual_tab_guide_rect)
+        pygame.draw.rect(screen, BLACK, manual_tab_guide_rect, 2)
+        tab_guide_surf = font_small.render("生存指南", True, BLACK)
+        screen.blit(tab_guide_surf, (manual_tab_guide_rect.centerx - tab_guide_surf.get_width() // 2,
+                                     manual_tab_guide_rect.centery - tab_guide_surf.get_height() // 2))
+
+    # 右側內容區
+    content_x = panel_rect.x + manual_sidebar_width + 25
+
+    if manual_view == 'GUIDE' and has_guide:
+        title_surf = font.render("《夜間行駛生存指南》", True, BLACK)
+        screen.blit(title_surf, (content_x, panel_rect.y + 20))
+
+        rule_y = panel_rect.y + 65
+        for label, rule_text, desc_text in guide_rules:
+            label_surf = font_small.render(label, True, RED)
+            screen.blit(label_surf, (content_x, rule_y))
+
+            rule_surf = font_small.render(rule_text, True, BLACK)
+            screen.blit(rule_surf, (content_x, rule_y + 22))
+
+            desc_surf = font_small.render(desc_text, True, DARK_GRAY)
+            screen.blit(desc_surf, (content_x, rule_y + 44))
+
+            rule_y += 22 * 3 + 8
+    else:
+        title_surf = font.render("操作手冊", True, BLACK)
+        screen.blit(title_surf, (content_x, panel_rect.y + 20))
+
+        instructions = [
+            "← → : 左右移動",
+            "F : 與場景互動",
+            "B : 開啟背包",
+            "TAB : 關閉此手冊"
+        ]
+        for i, text in enumerate(instructions):
+            text_surf = font_small.render(text, True, BLACK)
+            screen.blit(text_surf, (content_x, panel_rect.y + 90 + i * 40))
 
     # 關閉按鈕
     pygame.draw.rect(screen, RED, close_button_rect)
@@ -435,6 +491,13 @@ def draw_console_focus():
             pygame.draw.rect(screen, GRAY, slot_rect)
             pygame.draw.rect(screen, DARK_GRAY, slot_rect, 3)
             label = "(已拾取)"
+        elif item.get('sealed'):
+            pygame.draw.rect(screen, item['color'], slot_rect)
+            pygame.draw.rect(screen, BLACK, slot_rect, 3)
+            # 封住暗格的膠帶（交叉貼成 X 型）
+            pygame.draw.line(screen, TAPE_COLOR, slot_rect.topleft, slot_rect.bottomright, 12)
+            pygame.draw.line(screen, TAPE_COLOR, slot_rect.topright, slot_rect.bottomleft, 12)
+            label = "被膠帶封住"
         else:
             pygame.draw.rect(screen, item['color'], slot_rect)
             pygame.draw.rect(screen, BLACK, slot_rect, 3)
@@ -443,7 +506,7 @@ def draw_console_focus():
         label_surf = font_small.render(label, True, WHITE)
         screen.blit(label_surf, (slot_rect.centerx - label_surf.get_width() // 2, slot_rect.bottom + 10))
 
-    hint_surf = font_small.render("點擊道具拾取・F : 離開細節畫面", True, WHITE)
+    hint_surf = font_small.render("點擊膠帶撕開・點擊道具拾取・F : 離開細節畫面", True, WHITE)
     screen.blit(hint_surf, (console_panel_rect.centerx - hint_surf.get_width() // 2, console_panel_rect.bottom - 30))
 
 
@@ -523,10 +586,14 @@ while running:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_TAB:
                     game_state = 'PLAYING'
-            if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if close_button_rect.collidepoint(event.pos):
                     game_state = 'PLAYING'
-        
+                elif manual_tab_manual_rect.collidepoint(event.pos):
+                    manual_view = 'MANUAL'
+                elif has_guide and manual_tab_guide_rect.collidepoint(event.pos):
+                    manual_view = 'GUIDE'
+
         # 繪製背景遊戲畫面
         draw_background(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
@@ -682,10 +749,17 @@ while running:
                     game_state = 'PLAYING'
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 for item in console_items:
-                    if not item['collected'] and item['rect'].collidepoint(event.pos):
+                    if item['collected'] or not item['rect'].collidepoint(event.pos):
+                        continue
+                    if item.get('sealed'):
+                        item['sealed'] = False # 撕開膠帶
+                    elif item['name'] == '《夜間行駛生存指南》':
+                        has_guide = True # 生存指南不放進背包，改成按 TAB 查看
+                        item['collected'] = True
+                    else:
                         inventory.append(item['name'])
                         item['collected'] = True
-                        break
+                    break
 
         draw_background(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
