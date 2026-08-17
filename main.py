@@ -16,6 +16,8 @@ pygame.display.set_caption("列車長模擬器")
 FLOOR_HEIGHT = 50
 FPS = 60
 PLAYER_SPEED = 5
+DOOR_HEIGHT = 200
+DOOR_WIDTH = 80
 
 # 定義顏色 (RGB 格式)
 WHITE = (255, 255, 255)
@@ -27,6 +29,10 @@ BROWN = (139, 69, 19) # 座椅顏色
 DARK_BROWN = (101, 67, 33) # 座椅暗面顏色
 RED = (255, 0, 0) # 按鈕顏色
 GREEN = (0, 255, 0) # 按鈕顏色
+
+# 載入字型 (使用電腦內建的中文字型)
+font = pygame.font.SysFont("microsoftjhenghei", 28)
+font_small = pygame.font.SysFont("microsoftjhenghei", 20)
 
 # 3. 載入並設定列車長
 try:
@@ -42,7 +48,7 @@ except pygame.error as e:
 
 # 設定列車長的碰撞框 (Rect)
 conductor_rect = pygame.Rect(
-    WIDTH // 2 - 80, 
+    COCKPIT_WIDTH - DOOR_WIDTH - 160 - 10, # 初始 x 位置：駕駛艙門的左邊再過去一點
     HEIGHT - FLOOR_HEIGHT - 160, 
     160, 
     160
@@ -54,12 +60,13 @@ clock = pygame.time.Clock()
 camera_x = 0
 
 # --- 場景管理 ---
-current_scene = 'CARRIAGE_1' # 初始場景
+current_scene = 'COCKPIT' # 遊戲從駕駛艙開始
 
-# 定義每個場景的互動門
-DOOR_HEIGHT = 200
-DOOR_WIDTH = 80
-doors = {
+# --- 遊戲狀態管理 ---
+game_state = 'MANUAL' # 初始狀態為顯示手冊
+close_button_rect = pygame.Rect(WIDTH - 50, 50, 30, 30) # 手冊的關閉按鈕
+
+doors = { # 定義每個場景的互動門
     'CARRIAGE_1': {
         'cockpit_door': pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT),
         'exit_door': pygame.Rect(CARRIAGE_WIDTH - DOOR_WIDTH, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT),
@@ -76,6 +83,51 @@ doors = {
         'exit_door': pygame.Rect(COCKPIT_WIDTH - DOOR_WIDTH, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT),
     }
 }
+
+def draw_manual_screen():
+    """繪製操作手冊畫面"""
+    # 半透明背景
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 180))
+    screen.blit(overlay, (0, 0))
+
+    # 手冊面板
+    panel_rect = pygame.Rect(WIDTH // 2 - 250, HEIGHT // 2 - 150, 500, 300)
+    pygame.draw.rect(screen, WHITE, panel_rect)
+    pygame.draw.rect(screen, BLACK, panel_rect, 3)
+
+    # 標題
+    title_surf = font.render("操作手冊", True, BLACK)
+    screen.blit(title_surf, (panel_rect.centerx - title_surf.get_width() // 2, panel_rect.y + 20))
+
+    # 說明文字
+    instructions = [
+        "← → : 左右移動",
+        "F : 與門互動，切換場景",
+        "TAB : 關閉此手冊"
+    ]
+    for i, text in enumerate(instructions):
+        text_surf = font_small.render(text, True, BLACK)
+        screen.blit(text_surf, (panel_rect.x + 40, panel_rect.y + 80 + i * 40))
+
+    # 關閉按鈕
+    pygame.draw.rect(screen, RED, close_button_rect)
+    close_text_surf = font.render("X", True, WHITE)
+    screen.blit(close_text_surf, (close_button_rect.centerx - close_text_surf.get_width() // 2,
+                                  close_button_rect.centery - close_text_surf.get_height() // 2))
+
+
+def draw_manual_hint():
+    """在右上角繪製提示：按 TAB 開關操作手冊"""
+    hint_text_surf = font_small.render("TAB : 操作手冊", True, WHITE)
+    hint_rect = hint_text_surf.get_rect()
+    hint_bg_rect = pygame.Rect(0, 0, hint_rect.width + 20, hint_rect.height + 12)
+    hint_bg_rect.topright = (WIDTH - 15, 15)
+    hint_bg = pygame.Surface(hint_bg_rect.size, pygame.SRCALPHA)
+    hint_bg.fill((0, 0, 0, 150))
+    screen.blit(hint_bg, hint_bg_rect)
+    screen.blit(hint_text_surf, (hint_bg_rect.centerx - hint_rect.width // 2, hint_bg_rect.centery - hint_rect.height // 2))
+
 
 def draw_background(camera_offset_x):
     """繪製背景、地板和窗戶，根據攝影機位置調整"""
@@ -216,99 +268,109 @@ def draw_conductor(surface, rect, image, camera_offset_x):
     else: # 否則，畫一個藍色方塊作為替代
         pygame.draw.rect(surface, BLUE, screen_rect)
 
+def draw_interact_hint(camera_offset_x):
+    """如果玩家靠近可互動的門，在角色上方顯示按 F 互動的提示"""
+    scene_doors = doors.get(current_scene, {})
+    for door_rect in scene_doors.values():
+        if conductor_rect.colliderect(door_rect):
+            hint_surf = font_small.render("F : 互動", True, WHITE)
+            hint_bg = pygame.Surface((hint_surf.get_width() + 16, hint_surf.get_height() + 10), pygame.SRCALPHA)
+            hint_bg.fill((0, 0, 0, 180))
+            hint_bg.blit(hint_surf, (8, 5))
+            screen_x = conductor_rect.centerx - camera_offset_x - hint_bg.get_width() // 2
+            screen_y = conductor_rect.top - hint_bg.get_height() - 10
+            screen.blit(hint_bg, (screen_x, screen_y))
+            break
+
 # 4. 遊戲主迴圈
 running = True
 while running:
-    # --- A. 事件偵測 ---
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False # 結束迴圈
+    if game_state == 'MANUAL':
+        # --- 手冊狀態的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_TAB:
+                    game_state = 'PLAYING'
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if close_button_rect.collidepoint(event.pos):
+                    game_state = 'PLAYING'
         
-        # 偵測 'F' 鍵按下事件
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_f:
-                # 在第一個車廂，準備進入連接處
-                if current_scene == 'CARRIAGE_1':
-                    # 檢查是否在右邊的門 (去連接處)
-                    if conductor_rect.colliderect(doors['CARRIAGE_1']['exit_door']):
-                        current_scene = 'CONNECTION'
-                        # 將玩家位置重設到連接處的入口
-                        conductor_rect.x = doors['CONNECTION']['entry_door_1'].right + 10
-                        camera_x = 0 # 重設攝影機
-                    # 檢查是否在左邊的門 (去駕駛艙)
-                    elif conductor_rect.colliderect(doors['CARRIAGE_1']['cockpit_door']):
-                        current_scene = 'COCKPIT'
-                        conductor_rect.x = doors['COCKPIT']['exit_door'].left - conductor_rect.width - 10
-                        camera_x = 0 # 重設攝影機
-                
-                # 在連接處，準備回到第一個車廂
-                elif current_scene == 'CONNECTION':
-                    # 檢查是否在左邊的門 (回車廂1)
-                    if conductor_rect.colliderect(doors['CONNECTION']['entry_door_1']):
-                        current_scene = 'CARRIAGE_1'
-                        # 將玩家位置重設到車廂的門口
-                        conductor_rect.x = doors['CARRIAGE_1']['exit_door'].left - conductor_rect.width - 10
-                        # 攝影機跟隨
-                        camera_x = conductor_rect.centerx - (WIDTH // 2)
-                    # 檢查是否在右邊的門 (去車廂2)
-                    elif conductor_rect.colliderect(doors['CONNECTION']['exit_door_2']):
-                        current_scene = 'CARRIAGE_2'
-                        # 將玩家位置重設到車廂2的入口
-                        conductor_rect.x = doors['CARRIAGE_2']['entry_door'].right + 10
-                        camera_x = 0 # 重設攝影機
-                
-                # 在第二個車廂，準備回到連接處
-                elif current_scene == 'CARRIAGE_2':
-                    if conductor_rect.colliderect(doors['CARRIAGE_2']['entry_door']):
-                        current_scene = 'CONNECTION'
-                        conductor_rect.x = doors['CONNECTION']['exit_door_2'].left - conductor_rect.width - 10
-                
-                # 在駕駛艙，準備回到第一個車廂
-                elif current_scene == 'COCKPIT':
-                    if conductor_rect.colliderect(doors['COCKPIT']['exit_door']):
-                        current_scene = 'CARRIAGE_1'
-                        conductor_rect.x = doors['CARRIAGE_1']['cockpit_door'].right + 10
+        # 繪製背景遊戲畫面
+        draw_background(camera_x)
+        draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        # 在上方繪製手冊
+        draw_manual_screen()
 
-    # --- B. 遊戲邏輯 ---
-    # 根據當前場景設定世界邊界
-    if 'CARRIAGE' in current_scene:
-        current_world_width = CARRIAGE_WIDTH
-    elif current_scene == 'CONNECTION':
-        current_world_width = CONNECTION_WIDTH
-    else: # COCKPIT
-        current_world_width = COCKPIT_WIDTH
+    elif game_state == 'PLAYING':
+        # --- 正常遊戲狀態的事件與邏輯 ---
+        # A. 事件偵測
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_TAB:
+                    game_state = 'MANUAL'
+                if event.key == pygame.K_f:
+                    # (場景切換邏輯...)
+                    if current_scene == 'CARRIAGE_1':
+                        if conductor_rect.colliderect(doors['CARRIAGE_1']['exit_door']):
+                            current_scene = 'CONNECTION'
+                            conductor_rect.x = doors['CONNECTION']['entry_door_1'].right + 10
+                            camera_x = 0
+                        elif conductor_rect.colliderect(doors['CARRIAGE_1']['cockpit_door']):
+                            current_scene = 'COCKPIT'
+                            conductor_rect.x = doors['COCKPIT']['exit_door'].left - conductor_rect.width - 10
+                            camera_x = 0
+                    elif current_scene == 'CONNECTION':
+                        if conductor_rect.colliderect(doors['CONNECTION']['entry_door_1']):
+                            current_scene = 'CARRIAGE_1'
+                            conductor_rect.x = doors['CARRIAGE_1']['exit_door'].left - conductor_rect.width - 10
+                            camera_x = conductor_rect.centerx - (WIDTH // 2)
+                        elif conductor_rect.colliderect(doors['CONNECTION']['exit_door_2']):
+                            current_scene = 'CARRIAGE_2'
+                            conductor_rect.x = doors['CARRIAGE_2']['entry_door'].right + 10
+                            camera_x = 0
+                    elif current_scene == 'CARRIAGE_2':
+                        if conductor_rect.colliderect(doors['CARRIAGE_2']['entry_door']):
+                            current_scene = 'CONNECTION'
+                            conductor_rect.x = doors['CONNECTION']['exit_door_2'].left - conductor_rect.width - 10
+                    elif current_scene == 'COCKPIT':
+                        if conductor_rect.colliderect(doors['COCKPIT']['exit_door']):
+                            current_scene = 'CARRIAGE_1'
+                            conductor_rect.x = doors['CARRIAGE_1']['cockpit_door'].right + 10
 
-    keys = pygame.key.get_pressed()
-    
-    # 記錄移動前的位置，用於碰撞後的位置修正
-    prev_x = conductor_rect.x
+        # B. 遊戲邏輯
+        if 'CARRIAGE' in current_scene:
+            current_world_width = CARRIAGE_WIDTH
+        elif current_scene == 'CONNECTION':
+            current_world_width = CONNECTION_WIDTH
+        else: # COCKPIT
+            current_world_width = COCKPIT_WIDTH
 
-    # 偵測左右方向鍵
-    if keys[pygame.K_LEFT]:
-        conductor_rect.x -= PLAYER_SPEED
-    if keys[pygame.K_RIGHT]:
-        conductor_rect.x += PLAYER_SPEED
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_LEFT]:
+            conductor_rect.x -= PLAYER_SPEED
+        if keys[pygame.K_RIGHT]:
+            conductor_rect.x += PLAYER_SPEED
 
-    # 當前場景的世界邊界限制
-    if conductor_rect.left < 0:
-        conductor_rect.left = 0
-    if conductor_rect.right > current_world_width:
-        conductor_rect.right = current_world_width
+        if conductor_rect.left < 0:
+            conductor_rect.left = 0
+        if conductor_rect.right > current_world_width:
+            conductor_rect.right = current_world_width
 
-    # 更新攝影機位置，使其跟隨玩家，讓玩家保持在畫面中央
-    camera_x = conductor_rect.centerx - (WIDTH // 2)
+        camera_x = conductor_rect.centerx - (WIDTH // 2)
+        if camera_x < 0:
+            camera_x = 0
+        if camera_x > current_world_width - WIDTH:
+            camera_x = current_world_width - WIDTH
 
-    # 限制攝影機的移動範圍，避免在世界邊緣看到空白區域
-    if camera_x < 0:
-        camera_x = 0
-    if camera_x > current_world_width - WIDTH:
-        camera_x = current_world_width - WIDTH
-
-    # --- C. 畫面繪製 ---
-    draw_background(camera_x)
-   
-    # 繪製列車長
-    draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        # C. 畫面繪製
+        draw_background(camera_x)
+        draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_interact_hint(camera_x)
+        draw_manual_hint()
 
     # --- D. 更新畫面 ---
     pygame.display.flip()
