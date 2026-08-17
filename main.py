@@ -84,6 +84,7 @@ time_toggle_button_rect = pygame.Rect(WIDTH // 2 - 90, 15, 180, 34) # 切換到�
 
 # --- 第一天晚上劇情 ---
 day1_night_triggered = False # 是否已經播放過第一天晚上的事件，避免重複觸發
+day1_night_resolved = False # 第一天晚上的劇情是否已經解完，解完之前無法前進到第二天
 lights_out = False # 列車燈光是否熄滅中，此時任務指引是返回駕駛室，且開門需要手電筒
 
 # --- 手電筒 ---
@@ -118,6 +119,69 @@ night1_lines_open = [ # 選擇「開門」後的劇情——會被發現
 
 night1_choice_open_rect = pygame.Rect(WIDTH // 2 - 180, HEIGHT // 2 + 20, 140, 50)
 night1_choice_close_rect = pygame.Rect(WIDTH // 2 + 40, HEIGHT // 2 + 20, 140, 50)
+
+game_over_reason = "" # Game Over 畫面顯示的死因說明，依觸發事件動態更換
+
+# --- 第二天晚上劇情 ---
+day2_night_triggered = False # 是否已經播放過第二天晚上的事件，避免重複觸發
+
+night2_intro_lines = [
+    ("旁白", "列車進入夜間，一切原本正常。"),
+    ("旁白", "但玩家漸漸發現，路線標誌開始出現不合理的變化。"),
+    ("旁白", "原本：第六站 → 終點"),
+    ("旁白", "突然變成：第六站 → 青木站 → 終點"),
+]
+
+night2_stop_result_brake = [ # 選擇「停車」後的過渡劇情
+    ("旁白", "你試圖煞車——但列車彷彿不受控制，仍舊緩緩滑進了一座不存在的月台。"),
+]
+
+night2_stop_result_no_brake = [ # 選擇「不停車」後的過渡劇情
+    ("旁白", "你沒有煞車，任由列車照著詭異的路線行駛。"),
+    ("旁白", "最終，列車還是緩緩滑進了一座不存在的月台。"),
+]
+
+night2_platform_lines = [ # 兩種停車選擇之後，共同接續的劇情
+    ("旁白", "指南規則四：「如果列車停靠一個沒有名字的車站，請保持車門關閉，不要讓任何人上車。」"),
+    ("旁白", "月台上站著很多人，全部面向列車，沒有人動。"),
+]
+
+night2_lines_closed_door = [ # 選擇「不開門」後的劇情——安全路線
+    ("旁白", "你緊閉車門。"),
+    ("旁白", "突然，月台上所有人一起轉頭看向駕駛室。"),
+    ("旁白", "你屏住呼吸，直到他們一動也不動——列車終於再次啟動。"),
+    ("旁白", "凌晨 00:17，青木站消失了，彷彿從未存在過。"),
+    ("旁白", "你翻出白天蒐集到的舊路線圖、員工日誌與事故報紙，重新拼湊出真相："),
+    ("旁白", "青木站不是普通的廢站。三年前事故當晚，列車根本沒有按照正常路線行駛，"),
+    ("旁白", "而是被人為切換到了青木站。"),
+    ("旁白", "第二天，結束。"),
+]
+
+night2_lines_open_door = [ # 選擇「開門」後的劇情——違反規則四
+    ("旁白", "你打開了車門。"),
+    ("旁白", "月台上所有人同時轉過頭，直直地看向你。"),
+    ("旁白", "沒有人說話，但他們開始，一步一步地朝列車走來。"),
+]
+
+# --- 通用選擇畫面（可重複用來詢問「A / B」二選一）---
+choice_prompt = ""
+choice_label_a = ""
+choice_label_b = ""
+choice_result_a = None # (dialogue_lines, active_npc)
+choice_result_b = None
+choice_rect_a = pygame.Rect(WIDTH // 2 - 180, HEIGHT // 2 + 20, 140, 50)
+choice_rect_b = pygame.Rect(WIDTH // 2 + 40, HEIGHT // 2 + 20, 140, 50)
+
+
+def start_choice(prompt, label_a, result_a, label_b, result_b):
+    """開始一個通用的二選一選擇畫面"""
+    global choice_prompt, choice_label_a, choice_label_b, choice_result_a, choice_result_b, game_state
+    choice_prompt = prompt
+    choice_label_a = label_a
+    choice_label_b = label_b
+    choice_result_a = result_a
+    choice_result_b = result_b
+    game_state = 'STORY_CHOICE'
 
 doors = { # 定義每個場景的互動門
     'CARRIAGE_1': {
@@ -803,20 +867,42 @@ def draw_game_over_screen():
     title_surf = font.render("GAME OVER", True, RED)
     screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, HEIGHT // 2 - 60))
 
-    reason_surf = font_small.render("你打開了門，被那個「多出來的人」發現了。", True, WHITE)
+    reason_surf = font_small.render(game_over_reason, True, WHITE)
     screen.blit(reason_surf, (WIDTH // 2 - reason_surf.get_width() // 2, HEIGHT // 2))
 
     hint_surf = font_small.render("按 R 重新開始", True, GRAY)
     screen.blit(hint_surf, (WIDTH // 2 - hint_surf.get_width() // 2, HEIGHT // 2 + 40))
 
 
+def draw_story_choice():
+    """繪製通用的「A / B」二選一選擇畫面"""
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 200))
+    screen.blit(overlay, (0, 0))
+
+    prompt_surf = font.render(choice_prompt, True, WHITE)
+    screen.blit(prompt_surf, (WIDTH // 2 - prompt_surf.get_width() // 2, HEIGHT // 2 - 60))
+
+    pygame.draw.rect(screen, RED, choice_rect_a)
+    pygame.draw.rect(screen, BLACK, choice_rect_a, 3)
+    label_a_surf = font_small.render(choice_label_a, True, WHITE)
+    screen.blit(label_a_surf, (choice_rect_a.centerx - label_a_surf.get_width() // 2,
+                               choice_rect_a.centery - label_a_surf.get_height() // 2))
+
+    pygame.draw.rect(screen, (70, 90, 160), choice_rect_b)
+    pygame.draw.rect(screen, BLACK, choice_rect_b, 3)
+    label_b_surf = font_small.render(choice_label_b, True, WHITE)
+    screen.blit(label_b_surf, (choice_rect_b.centerx - label_b_surf.get_width() // 2,
+                               choice_rect_b.centery - label_b_surf.get_height() // 2))
+
+
 def reset_game():
     """重置遊戲進度，回到最初始狀態"""
     global current_scene, game_state, camera_x
-    global day_night_index, day1_night_triggered, lights_out
+    global day_night_index, day1_night_triggered, day1_night_resolved, day2_night_triggered, lights_out
     global flashlight_on, facing_direction
     global has_guide, has_girl_painting, active_npc, manual_view
-    global dialogue_lines, dialogue_index
+    global dialogue_lines, dialogue_index, game_over_reason
 
     conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - 160 - 10
     conductor_rect.y = HEIGHT - FLOOR_HEIGHT - 160
@@ -826,9 +912,12 @@ def reset_game():
 
     day_night_index = 0
     day1_night_triggered = False
+    day1_night_resolved = False
+    day2_night_triggered = False
     lights_out = False
     flashlight_on = False
     facing_direction = 'RIGHT'
+    game_over_reason = ""
 
     has_guide = False
     has_girl_painting = False
@@ -988,7 +1077,13 @@ while running:
                             current_scene = 'CARRIAGE_1'
                             conductor_rect.x = doors['CARRIAGE_1']['cockpit_door'].right + 10
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if time_toggle_button_rect.collidepoint(event.pos):
+                if time_toggle_button_rect.collidepoint(event.pos) and DAY_NIGHT_STAGES[day_night_index] == 'DAY1_NIGHT' and day1_night_triggered and not day1_night_resolved:
+                    # 第一天晚上的劇情還沒解完，無法前進到第二天
+                    dialogue_lines = [(" ", "第一天晚上的劇情還沒結束，無法前進到下一天。")]
+                    dialogue_index = 0
+                    active_npc = None
+                    game_state = 'DIALOGUE'
+                elif time_toggle_button_rect.collidepoint(event.pos):
                     day_night_index = min(day_night_index + 1, len(DAY_NIGHT_STAGES) - 1)
                     if DAY_NIGHT_STAGES[day_night_index] == 'DAY1_NIGHT' and not day1_night_triggered:
                         # 觸發第一天晚上的劇情
@@ -996,6 +1091,13 @@ while running:
                         dialogue_lines = night1_intro_lines
                         dialogue_index = 0
                         active_npc = 'NIGHT1_INTRO'
+                        game_state = 'DIALOGUE'
+                    elif DAY_NIGHT_STAGES[day_night_index] == 'DAY2_NIGHT' and not day2_night_triggered:
+                        # 觸發第二天晚上的劇情
+                        day2_night_triggered = True
+                        dialogue_lines = night2_intro_lines
+                        dialogue_index = 0
+                        active_npc = 'NIGHT2_INTRO'
                         game_state = 'DIALOGUE'
 
         # B. 遊戲邏輯
@@ -1080,9 +1182,32 @@ while running:
                             game_state = 'NIGHT1_CHOICE'
                         elif active_npc == 'NIGHT1_OUTRO':
                             active_npc = None
+                            day1_night_resolved = True
                             game_state = 'PLAYING'
                         elif active_npc == 'NIGHT1_CAUGHT':
                             active_npc = None
+                            game_over_reason = "你打開了門，被那個「多出來的人」發現了。"
+                            game_state = 'GAME_OVER'
+                        elif active_npc == 'NIGHT2_INTRO':
+                            active_npc = None
+                            start_choice(
+                                "要緊急煞車嗎？",
+                                "煞車", (night2_stop_result_brake + night2_platform_lines, 'NIGHT2_PLATFORM'),
+                                "不煞車", (night2_stop_result_no_brake + night2_platform_lines, 'NIGHT2_PLATFORM'),
+                            )
+                        elif active_npc == 'NIGHT2_PLATFORM':
+                            active_npc = None
+                            start_choice(
+                                "要打開車門嗎？",
+                                "開門", (night2_lines_open_door, 'NIGHT2_CAUGHT'),
+                                "不開門", (night2_lines_closed_door, 'NIGHT2_SAFE'),
+                            )
+                        elif active_npc == 'NIGHT2_SAFE':
+                            active_npc = None
+                            game_state = 'PLAYING'
+                        elif active_npc == 'NIGHT2_CAUGHT':
+                            active_npc = None
+                            game_over_reason = "你打開了車門，月台上的人朝你走了過來。"
                             game_state = 'GAME_OVER'
                         else:
                             active_npc = None
@@ -1121,6 +1246,27 @@ while running:
         draw_night_overlay()
         if game_state == 'NIGHT1_CHOICE':
             draw_night1_choice()
+
+    elif game_state == 'STORY_CHOICE':
+        # --- 通用二選一選擇畫面的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if choice_rect_a.collidepoint(event.pos):
+                    dialogue_lines, active_npc = choice_result_a
+                    dialogue_index = 0
+                    game_state = 'DIALOGUE'
+                elif choice_rect_b.collidepoint(event.pos):
+                    dialogue_lines, active_npc = choice_result_b
+                    dialogue_index = 0
+                    game_state = 'DIALOGUE'
+
+        draw_background(camera_x)
+        draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_night_overlay()
+        if game_state == 'STORY_CHOICE':
+            draw_story_choice()
 
     elif game_state == 'GAME_OVER':
         # --- Game Over 畫面的事件與繪圖 ---
