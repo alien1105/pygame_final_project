@@ -240,6 +240,11 @@ girl_dialogue = [
     (" ", "從小女孩手中拿到了「小女孩的畫」。"),
 ]
 
+# 已經拿到畫之後，再找她說話會改播這段（不會重複給畫）
+girl_dialogue_repeat = [
+    ("小女孩", "……"),
+]
+
 # --- 老維修員 NPC（第二天白天起才會出現）---
 OLD_WORKER_SCENE = 'CARRIAGE_2'
 OLD_WORKER_MIN_DAY_INDEX = 2 # DAY_NIGHT_STAGES 中 'DAY2_DAY' 的索引
@@ -1064,8 +1069,8 @@ while running:
                     active_npc = 'OLD_LADY'
                     game_state = 'DIALOGUE'
                 elif event.key == pygame.K_f and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_rect):
-                    # 與小女孩互動，開始對話
-                    dialogue_lines = girl_dialogue
+                    # 與小女孩互動，開始對話（已經拿過畫的話改播重複對話）
+                    dialogue_lines = girl_dialogue_repeat if has_girl_painting else girl_dialogue
                     dialogue_index = 0
                     active_npc = 'GIRL'
                     game_state = 'DIALOGUE'
@@ -1207,8 +1212,9 @@ while running:
                     dialogue_index += 1
                     if dialogue_index >= len(dialogue_lines):
                         if active_npc == 'GIRL':
-                            has_girl_painting = True
-                            inventory.append('小女孩的畫')
+                            if not has_girl_painting:
+                                has_girl_painting = True
+                                inventory.append('小女孩的畫')
                             active_npc = None
                             game_state = 'PLAYING'
                         elif active_npc == 'NIGHT1_INTRO':
