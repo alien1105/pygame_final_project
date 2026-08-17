@@ -165,10 +165,48 @@ girl_dialogue = [
     (" ", "從小女孩手中拿到了「小女孩的畫」。"),
 ]
 
+# --- 老維修員 NPC（第二天白天起才會出現）---
+OLD_WORKER_SCENE = 'CARRIAGE_2'
+OLD_WORKER_MIN_DAY_INDEX = 2 # DAY_NIGHT_STAGES 中 'DAY2_DAY' 的索引
+old_worker_rect = pygame.Rect(700, HEIGHT - FLOOR_HEIGHT - 90, 60, 90) # 坐在車廂二的另一個座位上
+WORKER_COLOR = (90, 110, 90) # 老維修員用暗綠色方塊代表
+
+# 老維修員第二天白天的對話：主線內容
+old_worker_dialogue_intro = [
+    ("主角", "欸，你知道昨晚到底發生了什麼事嗎？"),
+    ("老維修員", "……那種事，還是別多問比較好。"),
+    ("主角", "可是我真的看到了什麼。"),
+    ("老維修員", "如果你晚上看見第七站，別停。"),
+    ("主角", "第七站？這條路線不是只有六個車站嗎？"),
+    ("老維修員", "……以前，是有第七站的。"),
+]
+
+# 若玩家持有第一天拿到的舊路線圖，會多出這段揭露「青木站」的內容
+old_worker_dialogue_map_reveal = [
+    ("主角", "（我想起背包裡的舊路線圖……）"),
+    ("旁白", "你翻出舊路線圖，發現上面有一個被塗黑的車站——「青木站」。"),
+    ("旁白", "但現在的官方路線圖上，根本沒有這個地方。"),
+]
+
+old_worker_dialogue_outro = [
+    ("老維修員", "……你最好，什麼都別想起來。"),
+]
+
+
+def build_old_worker_dialogue():
+    """組合老維修員的對話內容，若玩家持有舊路線圖會多顯示青木站的揭露"""
+    lines = list(old_worker_dialogue_intro)
+    if '舊路線圖' in inventory:
+        lines += old_worker_dialogue_map_reveal
+    lines += old_worker_dialogue_outro
+    return lines
+
+
 # 對話中不同說話者對應的文字顏色
 SPEAKER_COLORS = {
     "老太太": RED,
     "小女孩": PINK,
+    "老維修員": WORKER_COLOR,
     "主角": BLUE,
     "旁白": DARK_GRAY,
 }
@@ -211,13 +249,39 @@ item_spots = [
         'items': ['舊路線圖'],
         'collected': False,
     },
+    {
+        'scene': 'CARRIAGE_1',
+        'rect': pygame.Rect(980, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 60, DOOR_HEIGHT), # 車廂座位上
+        'items': ['舊報紙'],
+        'collected': False,
+        'min_day_index': 2, # 第二天白天起才會出現
+        'reveal_lines': [
+            ("旁白", "報紙記錄：「三年前列車事故造成多人死亡。」"),
+            ("旁白", "事故地點：青木站附近。"),
+        ],
+    },
+    {
+        'scene': 'COCKPIT',
+        'rect': pygame.Rect(340, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 60, DOOR_HEIGHT), # 駕駛室角落
+        'items': ['車站員工日誌'],
+        'collected': False,
+        'min_day_index': 2, # 第二天白天起才會出現
+        'reveal_lines': [
+            ("旁白", "員工日誌最後一筆寫著："),
+            ("旁白", "「00:17，青木站再次亮燈。」"),
+        ],
+    },
 ]
 
 
 def get_item_spot_at(scene, rect):
     """回傳玩家目前所在位置可拾取、且尚未拾取的道具點（沒有則回傳 None）"""
     for spot in item_spots:
-        if not spot['collected'] and spot['scene'] == scene and rect.colliderect(spot['rect']):
+        if spot['collected'] or spot['scene'] != scene:
+            continue
+        if day_night_index < spot.get('min_day_index', 0):
+            continue
+        if rect.colliderect(spot['rect']):
             return spot
     return None
 
@@ -485,6 +549,15 @@ def draw_girl(camera_offset_x):
     pygame.draw.circle(screen, PINK, (screen_rect.centerx, screen_rect.top - 12), 12) # 頭部
 
 
+def draw_old_worker(camera_offset_x):
+    """繪製老維修員 NPC（第二天白天起，僅在車廂二場景顯示）"""
+    if current_scene != OLD_WORKER_SCENE or day_night_index < OLD_WORKER_MIN_DAY_INDEX:
+        return
+    screen_rect = old_worker_rect.move(-camera_offset_x, 0)
+    pygame.draw.rect(screen, WORKER_COLOR, screen_rect)
+    pygame.draw.circle(screen, WORKER_COLOR, (screen_rect.centerx, screen_rect.top - 15), 15) # 頭部
+
+
 def draw_inventory_screen():
     """繪製背包畫面，列出已拾取的道具"""
     # 半透明背景
@@ -517,6 +590,8 @@ def draw_item_spots(camera_offset_x):
     """繪製目前場景中尚未拾取的道具標記"""
     for spot in item_spots:
         if spot['scene'] != current_scene or spot['collected']:
+            continue
+        if day_night_index < spot.get('min_day_index', 0):
             continue
         marker_rect = pygame.Rect(0, 0, 26, 26)
         marker_rect.center = (spot['rect'].centerx - camera_offset_x, HEIGHT - FLOOR_HEIGHT - 30)
@@ -790,8 +865,10 @@ def draw_interact_hint(camera_offset_x):
         interactables.append(old_lady_rect)
     if current_scene == GIRL_SCENE:
         interactables.append(girl_rect)
+    if current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX:
+        interactables.append(old_worker_rect)
     for spot in item_spots:
-        if spot['scene'] == current_scene and not spot['collected']:
+        if spot['scene'] == current_scene and not spot['collected'] and day_night_index >= spot.get('min_day_index', 0):
             interactables.append(spot['rect'])
     if current_scene == CONSOLE_FOCUS_SCENE:
         interactables.append(console_cabinet_rect)
@@ -857,12 +934,19 @@ while running:
                     dialogue_index = 0
                     active_npc = 'GIRL'
                     game_state = 'DIALOGUE'
+                elif event.key == pygame.K_f and current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX and conductor_rect.colliderect(old_worker_rect):
+                    # 與老維修員互動，開始對話
+                    dialogue_lines = build_old_worker_dialogue()
+                    dialogue_index = 0
+                    active_npc = 'OLD_WORKER'
+                    game_state = 'DIALOGUE'
                 elif event.key == pygame.K_f and get_item_spot_at(current_scene, conductor_rect) is not None:
                     # 撿拾道具
                     item_spot = get_item_spot_at(current_scene, conductor_rect)
                     inventory.extend(item_spot['items'])
                     item_spot['collected'] = True
-                    dialogue_lines = [(" ", f"獲得了「{ '、'.join(item_spot['items']) }」。")]
+                    pickup_line = (" ", f"獲得了「{ '、'.join(item_spot['items']) }」。")
+                    dialogue_lines = item_spot.get('reveal_lines', []) + [pickup_line]
                     dialogue_index = 0
                     active_npc = None
                     game_state = 'DIALOGUE'
@@ -953,6 +1037,7 @@ while running:
         draw_background(camera_x)
         draw_old_lady(camera_x)
         draw_girl(camera_x)
+        draw_old_worker(camera_x)
         draw_item_spots(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
         draw_night_overlay()
@@ -1006,6 +1091,7 @@ while running:
         draw_background(camera_x)
         draw_old_lady(camera_x)
         draw_girl(camera_x)
+        draw_old_worker(camera_x)
         draw_item_spots(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
         draw_night_overlay()
@@ -1059,6 +1145,7 @@ while running:
         draw_background(camera_x)
         draw_old_lady(camera_x)
         draw_girl(camera_x)
+        draw_old_worker(camera_x)
         draw_item_spots(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
         draw_night_overlay()
