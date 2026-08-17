@@ -71,6 +71,17 @@ current_scene = 'COCKPIT' # 遊戲從駕駛艙開始
 game_state = 'MANUAL' # 初始狀態為顯示手冊
 close_button_rect = pygame.Rect(WIDTH - 50, 50, 30, 30) # 手冊的關閉按鈕
 
+# --- 天數／白天晚上切換（依序循環：第一天白天 → 第一天晚上 → 第二天白天 → 第二天晚上）---
+DAY_NIGHT_STAGES = ['DAY1_DAY', 'DAY1_NIGHT', 'DAY2_DAY', 'DAY2_NIGHT']
+DAY_NIGHT_LABELS = {
+    'DAY1_DAY': '第一天白天',
+    'DAY1_NIGHT': '第一天晚上',
+    'DAY2_DAY': '第二天白天',
+    'DAY2_NIGHT': '第二天晚上',
+}
+day_night_index = 0 # 目前所在階段在 DAY_NIGHT_STAGES 中的索引
+time_toggle_button_rect = pygame.Rect(WIDTH // 2 - 90, 15, 180, 34) # 切換到下一個天數／時段的按鈕
+
 doors = { # 定義每個場景的互動門
     'CARRIAGE_1': {
         'cockpit_door': pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT),
@@ -522,6 +533,29 @@ def draw_inventory_hint():
     screen.blit(hint_text_surf, (hint_bg_rect.centerx - hint_rect.width // 2, hint_bg_rect.centery - hint_rect.height // 2))
 
 
+def draw_night_overlay():
+    """如果目前階段是晚上，在畫面上疊加一層半透明深藍色營造夜晚氛圍"""
+    if not DAY_NIGHT_STAGES[day_night_index].endswith('NIGHT'):
+        return
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill(NIGHT_OVERLAY_COLOR)
+    screen.blit(overlay, (0, 0))
+
+
+def draw_time_toggle_button():
+    """繪製目前天數／時段按鈕，點擊後依序切換到下一個階段"""
+    current_stage = DAY_NIGHT_STAGES[day_night_index]
+    is_night = current_stage.endswith('NIGHT')
+    button_color = (200, 160, 60) if is_night else (70, 90, 160)
+
+    pygame.draw.rect(screen, button_color, time_toggle_button_rect)
+    pygame.draw.rect(screen, BLACK, time_toggle_button_rect, 2)
+
+    label_surf = font_small.render(DAY_NIGHT_LABELS[current_stage], True, WHITE)
+    screen.blit(label_surf, (time_toggle_button_rect.centerx - label_surf.get_width() // 2,
+                             time_toggle_button_rect.centery - label_surf.get_height() // 2))
+
+
 def draw_dialogue_box():
     """繪製對話框，顯示目前這句台詞"""
     speaker, text = dialogue_lines[dialogue_index]
@@ -663,6 +697,9 @@ while running:
                         if conductor_rect.colliderect(doors['COCKPIT']['exit_door']):
                             current_scene = 'CARRIAGE_1'
                             conductor_rect.x = doors['CARRIAGE_1']['cockpit_door'].right + 10
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if time_toggle_button_rect.collidepoint(event.pos):
+                    day_night_index = min(day_night_index + 1, len(DAY_NIGHT_STAGES) - 1)
 
         # B. 遊戲邏輯
         if 'CARRIAGE' in current_scene:
@@ -695,9 +732,11 @@ while running:
         draw_girl(camera_x)
         draw_item_spots(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_night_overlay()
         draw_interact_hint(camera_x)
         draw_manual_hint()
         draw_inventory_hint()
+        draw_time_toggle_button()
 
     elif game_state == 'DIALOGUE':
         # --- 對話狀態的事件與繪圖 ---
@@ -719,6 +758,7 @@ while running:
         draw_girl(camera_x)
         draw_item_spots(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_night_overlay()
         if game_state == 'DIALOGUE':
             draw_dialogue_box()
         draw_inventory_hint()
@@ -737,6 +777,7 @@ while running:
         draw_girl(camera_x)
         draw_item_spots(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_night_overlay()
         draw_inventory_screen()
 
     elif game_state == 'CONSOLE_FOCUS':
@@ -763,6 +804,7 @@ while running:
 
         draw_background(camera_x)
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_night_overlay()
         draw_console_focus()
         draw_inventory_hint()
 
