@@ -5,12 +5,30 @@ import sys
 pygame.init()
 
 # 2. 設定視窗大小與標題
-WIDTH, HEIGHT = 800, 400 # 螢幕大小
+WIDTH, HEIGHT = 800, 400 # 遊戲畫面的邏輯解析度（所有繪圖座標都以這個尺寸為準）
 CARRIAGE_WIDTH = 1600 # 車廂場景的寬度
 COCKPIT_WIDTH = 500 # 駕駛艙場景的寬度
 CONNECTION_WIDTH = 400 # 連接處場景的寬度
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
+
+# 實際的全螢幕視窗（使用螢幕原生解析度），遊戲畫面另外畫在 screen 這張邏輯畫布上，
+# 每一幀再用平滑縮放（而不是預設的最近鄰縮放）放大貼滿整個螢幕，畫質會清晰很多。
+# 直接拉伸填滿螢幕（不維持長寬比例），螢幕比例跟遊戲畫面不同時，畫面會有一點點被拉寬/拉高，
+# 但沒有黑邊、所有內容跟 UI 都看得到。
+display_surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 pygame.display.set_caption("軌遇")
+screen = pygame.Surface((WIDTH, HEIGHT))
+
+RENDER_SIZE = display_surface.get_size()
+RENDER_OFFSET = (0, 0)
+
+
+def to_logical_pos(pos):
+    """把滑鼠在實際全螢幕視窗上的座標，換算成遊戲邏輯畫面 (WIDTH x HEIGHT) 的座標，
+    這樣按鈕的 collidepoint() 判斷才會準確"""
+    x, y = pos
+    logical_x = (x - RENDER_OFFSET[0]) * WIDTH / RENDER_SIZE[0]
+    logical_y = (y - RENDER_OFFSET[1]) * HEIGHT / RENDER_SIZE[1]
+    return (logical_x, logical_y)
 
 # 遊戲常數
 FLOOR_HEIGHT = 50
@@ -198,6 +216,11 @@ close_button_rect = pygame.Rect(WIDTH - 50, 50, 30, 30) # 手冊的關閉按鈕
 
 # --- 開始畫面 ---
 start_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 60, 200, 55) # 開始遊戲按鈕
+exit_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 130, 200, 55) # 退出遊戲按鈕
+
+# --- 遊戲中按 ESC 跳出的選單（由上到下：繼續遊玩、返回主頁）---
+resume_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 - 40, 200, 55) # 繼續遊玩按鈕
+back_to_menu_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 30, 200, 55) # 返回主頁按鈕
 
 # --- 天數／白天晚上切換（依序循環：第一天白天 → 第一天晚上 → 第二天白天 → 第二天晚上）---
 DAY_NIGHT_STAGES = ['DAY1_DAY', 'DAY1_NIGHT', 'DAY2_DAY', 'DAY2_NIGHT']
@@ -578,8 +601,33 @@ def draw_start_screen():
     screen.blit(start_text_surf, (start_button_rect.centerx - start_text_surf.get_width() // 2,
                                   start_button_rect.centery - start_text_surf.get_height() // 2))
 
-    hint_surf = font_small.render("按 Enter 或點擊開始", True, GRAY)
-    screen.blit(hint_surf, (WIDTH // 2 - hint_surf.get_width() // 2, start_button_rect.bottom + 20))
+    pygame.draw.rect(screen, DARK_GRAY, exit_button_rect)
+    pygame.draw.rect(screen, WHITE, exit_button_rect, 3)
+    exit_text_surf = font.render("退出遊戲", True, WHITE)
+    screen.blit(exit_text_surf, (exit_button_rect.centerx - exit_text_surf.get_width() // 2,
+                                 exit_button_rect.centery - exit_text_surf.get_height() // 2))
+
+
+def draw_pause_menu():
+    """繪製按 ESC 跳出的選單（繼續遊玩／返回主頁）"""
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 180))
+    screen.blit(overlay, (0, 0))
+
+    title_surf = font.render("已暫停", True, WHITE)
+    screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, HEIGHT // 2 - 110))
+
+    pygame.draw.rect(screen, RED, resume_button_rect)
+    pygame.draw.rect(screen, WHITE, resume_button_rect, 3)
+    resume_text_surf = font.render("繼續遊玩", True, WHITE)
+    screen.blit(resume_text_surf, (resume_button_rect.centerx - resume_text_surf.get_width() // 2,
+                                   resume_button_rect.centery - resume_text_surf.get_height() // 2))
+
+    pygame.draw.rect(screen, DARK_GRAY, back_to_menu_button_rect)
+    pygame.draw.rect(screen, WHITE, back_to_menu_button_rect, 3)
+    back_text_surf = font.render("返回主頁", True, WHITE)
+    screen.blit(back_text_surf, (back_to_menu_button_rect.centerx - back_text_surf.get_width() // 2,
+                                 back_to_menu_button_rect.centery - back_text_surf.get_height() // 2))
 
 
 def draw_manual_screen():
@@ -642,7 +690,8 @@ def draw_manual_screen():
             "F : 與場景互動",
             "B : 開啟背包",
             "L : 開關手電筒（需持有手電筒）",
-            "TAB : 關閉此手冊"
+            "TAB : 關閉此手冊",
+            "ESC : 回到主頁"
         ]
         for i, text in enumerate(instructions):
             text_surf = font_small.render(text, True, BLACK)
@@ -1177,12 +1226,12 @@ while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            if event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_RETURN, pygame.K_SPACE):
-                    game_state = 'MANUAL'
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if start_button_rect.collidepoint(event.pos):
+                mouse_pos = to_logical_pos(event.pos)
+                if start_button_rect.collidepoint(mouse_pos):
                     game_state = 'MANUAL'
+                elif exit_button_rect.collidepoint(mouse_pos):
+                    running = False
 
         draw_start_screen()
 
@@ -1195,11 +1244,12 @@ while running:
                 if event.key == pygame.K_TAB:
                     game_state = 'PLAYING'
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if close_button_rect.collidepoint(event.pos):
+                mouse_pos = to_logical_pos(event.pos)
+                if close_button_rect.collidepoint(mouse_pos):
                     game_state = 'PLAYING'
-                elif manual_tab_manual_rect.collidepoint(event.pos):
+                elif manual_tab_manual_rect.collidepoint(mouse_pos):
                     manual_view = 'MANUAL'
-                elif has_guide and manual_tab_guide_rect.collidepoint(event.pos):
+                elif has_guide and manual_tab_guide_rect.collidepoint(mouse_pos):
                     manual_view = 'GUIDE'
 
         # 繪製背景遊戲畫面
@@ -1215,6 +1265,8 @@ while running:
             if event.type == pygame.QUIT:
                 running = False
             if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    game_state = 'PAUSE_MENU'
                 if event.key == pygame.K_TAB:
                     game_state = 'MANUAL'
                 if event.key == pygame.K_b:
@@ -1271,13 +1323,14 @@ while running:
                         current_scene = next_scene
                         conductor_rect.x = doors[next_scene]['prev'].right + 10
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if time_toggle_button_rect.collidepoint(event.pos) and DAY_NIGHT_STAGES[day_night_index] == 'DAY1_NIGHT' and day1_night_triggered and not day1_night_resolved:
+                mouse_pos = to_logical_pos(event.pos)
+                if time_toggle_button_rect.collidepoint(mouse_pos) and DAY_NIGHT_STAGES[day_night_index] == 'DAY1_NIGHT' and day1_night_triggered and not day1_night_resolved:
                     # 第一天晚上的劇情還沒解完，無法前進到第二天
                     dialogue_lines = [(" ", "第一天晚上的劇情還沒結束，無法前進到下一天。")]
                     dialogue_index = 0
                     active_npc = None
                     game_state = 'DIALOGUE'
-                elif time_toggle_button_rect.collidepoint(event.pos):
+                elif time_toggle_button_rect.collidepoint(mouse_pos):
                     day_night_index = min(day_night_index + 1, len(DAY_NIGHT_STAGES) - 1)
                     if DAY_NIGHT_STAGES[day_night_index] == 'DAY1_NIGHT' and not day1_night_triggered:
                         # 觸發第一天晚上的劇情
@@ -1357,6 +1410,30 @@ while running:
         draw_flashlight_hint()
         draw_time_toggle_button()
         draw_lights_out_hint()
+
+    elif game_state == 'PAUSE_MENU':
+        # --- 暫停選單的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    game_state = 'PLAYING'
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_pos = to_logical_pos(event.pos)
+                if resume_button_rect.collidepoint(mouse_pos):
+                    game_state = 'PLAYING'
+                elif back_to_menu_button_rect.collidepoint(mouse_pos):
+                    game_state = 'START'
+
+        draw_background(camera_x)
+        draw_old_lady(camera_x)
+        draw_girl(camera_x)
+        draw_old_worker(camera_x)
+        draw_item_spots(camera_x)
+        draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+        draw_night_overlay()
+        draw_pause_menu()
 
     elif game_state == 'DIALOGUE':
         # --- 對話狀態的事件與繪圖 ---
@@ -1452,12 +1529,13 @@ while running:
             if event.type == pygame.QUIT:
                 running = False
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if night1_choice_open_rect.collidepoint(event.pos):
+                mouse_pos = to_logical_pos(event.pos)
+                if night1_choice_open_rect.collidepoint(mouse_pos):
                     dialogue_lines = night1_lines_open
                     dialogue_index = 0
                     active_npc = 'NIGHT1_CAUGHT'
                     game_state = 'DIALOGUE'
-                elif night1_choice_close_rect.collidepoint(event.pos):
+                elif night1_choice_close_rect.collidepoint(mouse_pos):
                     dialogue_lines = night1_lines_closed
                     dialogue_index = 0
                     active_npc = 'NIGHT1_OUTRO'
@@ -1475,11 +1553,12 @@ while running:
             if event.type == pygame.QUIT:
                 running = False
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if choice_rect_a.collidepoint(event.pos):
+                mouse_pos = to_logical_pos(event.pos)
+                if choice_rect_a.collidepoint(mouse_pos):
                     dialogue_lines, active_npc = choice_result_a
                     dialogue_index = 0
                     game_state = 'DIALOGUE'
-                elif choice_rect_b.collidepoint(event.pos):
+                elif choice_rect_b.collidepoint(mouse_pos):
                     dialogue_lines, active_npc = choice_result_b
                     dialogue_index = 0
                     game_state = 'DIALOGUE'
@@ -1528,8 +1607,9 @@ while running:
                 if event.key == pygame.K_f or event.key == pygame.K_ESCAPE:
                     game_state = 'PLAYING'
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_pos = to_logical_pos(event.pos)
                 for item in console_items:
-                    if item['collected'] or not item['rect'].collidepoint(event.pos):
+                    if item['collected'] or not item['rect'].collidepoint(mouse_pos):
                         continue
                     if item.get('sealed'):
                         item['sealed'] = False # 撕開膠帶
@@ -1548,6 +1628,9 @@ while running:
         draw_inventory_hint()
 
     # --- D. 更新畫面 ---
+    # 把邏輯畫布平滑縮放後貼到全螢幕視窗中央（維持長寬比例，多餘的部分留黑邊）
+    scaled_screen = pygame.transform.smoothscale(screen, RENDER_SIZE)
+    display_surface.blit(scaled_screen, RENDER_OFFSET)
     pygame.display.flip()
 
     # 設定遊戲幀率 (Frame Rate) 為 60 FPS，並記錄這一幀經過的毫秒數供動畫使用
