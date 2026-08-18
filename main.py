@@ -184,6 +184,38 @@ train_day_tile_step = train_day_tile_width - TRAIN_DAY_TILE_OVERLAP
 # train_day.png 原圖（寬 3323px）裡四扇窗戶的實際中心位置，用來決定座椅要擺在哪裡
 TRAIN_DAY_WINDOW_CENTERS_ORIGINAL = [345, 915, 2405, 2975]
 
+# 載入晚上車廂背景圖片，做法跟白天車廂完全一樣（兩張完整圖片並排組成車廂）
+TRAIN_NIGHT_TILE_COUNT = 2
+try:
+    train_night_img_original = pygame.image.load('train_night.png').convert_alpha()
+    train_night_scale = HEIGHT / train_night_img_original.get_height()
+    train_night_tile_width = round(train_night_img_original.get_width() * train_night_scale)
+    train_night_img = pygame.transform.smoothscale(train_night_img_original, (train_night_tile_width, HEIGHT))
+except pygame.error as e:
+    print(f"無法載入圖片 'train_night.png': {e}")
+    print("請確認 'train_night.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用原本繪製的車廂背景作為替代。")
+    train_night_img = None # 如果圖片載入失敗，設定為 None
+    train_night_scale = HEIGHT / 1024
+    train_night_tile_width = CARRIAGE_WIDTH // TRAIN_NIGHT_TILE_COUNT
+
+TRAIN_NIGHT_TILE_OVERLAP = 3 # 原因同白天車廂：蓋掉縮放後兩張圖拼接處的模糊縫
+train_night_tile_step = train_night_tile_width - TRAIN_NIGHT_TILE_OVERLAP
+
+# train_night.png 原圖（寬 3320px）裡四扇窗戶的實際中心位置，用來決定座椅要擺在哪裡
+TRAIN_NIGHT_WINDOW_CENTERS_ORIGINAL = [355, 890, 2435, 2960]
+
+# 載入駕駛室白天背景圖片，直接拉伸蓋滿整個畫面（800x400），不維持原始長寬比例
+try:
+    drive_room_day_img_original = pygame.image.load('drive_room_day.png').convert_alpha()
+    drive_room_day_img = pygame.transform.smoothscale(drive_room_day_img_original, (WIDTH, HEIGHT))
+    COCKPIT_WIDTH = WIDTH # 駕駛艙圖片現在直接蓋滿整個畫面寬度，不用再左右捲動
+except pygame.error as e:
+    print(f"無法載入圖片 'drive_room_day.png': {e}")
+    print("請確認 'drive_room_day.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用原本繪製的駕駛艙背景作為替代。")
+    drive_room_day_img = None # 如果圖片載入失敗，設定為 None
+
 # 載入白天座椅圖片，並裁掉圖片邊緣多餘的透明留白，避免椅腳貼地時浮空
 try:
     from PIL import Image as PILImage
@@ -204,6 +236,23 @@ except Exception as e:
     print("請確認 'chair_day.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用原本繪製的座椅作為替代。")
     chair_day_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入晚上座椅圖片，做法跟白天座椅一樣
+try:
+    chair_night_pil = PILImage.open('chair_night.png').convert('RGBA')
+    chair_night_alpha_bbox = chair_night_pil.split()[3].getbbox()
+    if chair_night_alpha_bbox:
+        chair_night_pil = chair_night_pil.crop(chair_night_alpha_bbox)
+    chair_night_arr = feather_alpha_edges(np.array(chair_night_pil), radius=1.5)
+    chair_night_img_original = pygame.image.frombuffer(chair_night_arr.tobytes(), (chair_night_arr.shape[1], chair_night_arr.shape[0]), 'RGBA').convert_alpha()
+    CHAIR_NIGHT_HEIGHT = 150
+    chair_night_width = round(CHAIR_NIGHT_HEIGHT * chair_night_img_original.get_width() / chair_night_img_original.get_height())
+    chair_night_img = pygame.transform.smoothscale(chair_night_img_original, (chair_night_width, CHAIR_NIGHT_HEIGHT))
+except Exception as e:
+    print(f"無法載入圖片 'chair_night.png': {e}")
+    print("請確認 'chair_night.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用原本繪製的座椅作為替代。")
+    chair_night_img = None # 如果圖片載入失敗，設定為 None
 
 # 載入老太太專用圖片（已經包含椅子跟人物本身，取代車廂一的第一張椅子）
 try:
@@ -237,6 +286,19 @@ if train_day_img:
             pos = tile_index * train_day_tile_step + center
             if safe_min <= pos <= safe_max:
                 chair_day_positions.append(pos)
+
+# 依照背景圖片裡窗戶的實際位置，計算晚上座椅要擺放的世界座標，做法跟白天座椅一樣
+chair_night_positions = []
+if train_night_img:
+    night_window_centers_scaled = [round(x * train_night_scale) for x in TRAIN_NIGHT_WINDOW_CENTERS_ORIGINAL]
+    chair_night_half_width = (chair_night_img.get_width() // 2) if chair_night_img else 60
+    night_safe_min = DOOR_WIDTH + chair_night_half_width
+    night_safe_max = CARRIAGE_WIDTH - DOOR_WIDTH - chair_night_half_width
+    for tile_index in range(TRAIN_NIGHT_TILE_COUNT):
+        for center in night_window_centers_scaled:
+            pos = tile_index * train_night_tile_step + center
+            if night_safe_min <= pos <= night_safe_max:
+                chair_night_positions.append(pos)
 
 # 設定列車長的碰撞框 (Rect)
 conductor_rect = pygame.Rect(
@@ -276,6 +338,11 @@ DAY_NIGHT_LABELS = {
 }
 day_night_index = 0 # 目前所在階段在 DAY_NIGHT_STAGES 中的索引
 time_toggle_button_rect = pygame.Rect(WIDTH // 2 - 90, 15, 180, 34) # 切換到下一個天數／時段的按鈕
+
+
+def is_daytime():
+    """目前是否是白天（不是 XX_NIGHT 階段）"""
+    return not DAY_NIGHT_STAGES[day_night_index].endswith('NIGHT')
 
 # --- 第一天晚上劇情 ---
 day1_night_triggered = False # 是否已經播放過第一天晚上的事件，避免重複觸發
@@ -793,13 +860,16 @@ def draw_carriage_scene(camera_offset_x, scene_name):
     """繪製指定車廂內的物件 (座椅、窗戶、門)"""
     is_day = not DAY_NIGHT_STAGES[day_night_index].endswith('NIGHT')
 
-    # 白天使用車廂背景圖片，蓋掉 draw_background 畫的素色牆壁與地板
+    # 白天／晚上都使用車廂背景圖片，蓋掉 draw_background 畫的素色牆壁與地板
     # 用兩張完整的圖片並排組成車廂背景（互相重疊幾個像素，蓋掉拼接縫）
     if is_day and train_day_img:
         for tile_index in range(TRAIN_DAY_TILE_COUNT):
             screen.blit(train_day_img, (tile_index * train_day_tile_step - camera_offset_x, 0))
+    elif not is_day and train_night_img:
+        for tile_index in range(TRAIN_NIGHT_TILE_COUNT):
+            screen.blit(train_night_img, (tile_index * train_night_tile_step - camera_offset_x, 0))
 
-    # 畫座椅：白天依照背景圖片裡窗戶的位置擺放，晚上維持原本繪製的樣式（依車廂實際寬度平均分佈）
+    # 畫座椅：依照背景圖片裡窗戶的位置擺放；圖片載入失敗時才用原本繪製的樣式（依車廂實際寬度平均分佈）
     # 車廂一的第一張椅子改由 granny.png 取代（該圖片本身已經包含椅子），這裡跳過不重複畫
     if is_day and chair_day_img and chair_day_positions:
         for pos in chair_day_positions:
@@ -808,13 +878,19 @@ def draw_carriage_scene(camera_offset_x, scene_name):
             chair_rect = chair_day_img.get_rect()
             chair_rect.midbottom = (pos - camera_offset_x, HEIGHT - FLOOR_HEIGHT + 20)
             screen.blit(chair_day_img, chair_rect)
+    elif not is_day and chair_night_img and chair_night_positions:
+        # 晚上老太太不出現，這裡不用跳過位置，正常畫出完整的椅子
+        for pos in chair_night_positions:
+            chair_rect = chair_night_img.get_rect()
+            chair_rect.midbottom = (pos - camera_offset_x, HEIGHT - FLOOR_HEIGHT + 20)
+            screen.blit(chair_night_img, chair_rect)
     else:
         chair_positions = range(140, CARRIAGE_WIDTH - DOOR_WIDTH - 75, 140)
         for pos in chair_positions:
             draw_side_chair(pos, camera_offset_x)
 
-    # 畫窗戶（白天車廂背景圖片裡已經畫好窗戶了，不用再另外畫；晚上依車廂實際寬度平均分佈）
-    if not (is_day and train_day_img):
+    # 畫窗戶（車廂背景圖片裡已經畫好窗戶了，不用再另外畫；圖片載入失敗時才依車廂實際寬度平均分佈畫窗戶）
+    if not ((is_day and train_day_img) or (not is_day and train_night_img)):
         for x in range(100, CARRIAGE_WIDTH - DOOR_WIDTH - 150, 450):
             win_rect = pygame.Rect(x - camera_offset_x, 100, 150, 100)
             pygame.draw.rect(screen, WHITE, win_rect)
@@ -823,6 +899,12 @@ def draw_carriage_scene(camera_offset_x, scene_name):
 
 def draw_cockpit_scene(camera_offset_x):
     """繪製駕駛艙內的物件"""
+    if is_daytime() and drive_room_day_img:
+        # 白天使用駕駛室背景圖片，蓋掉 draw_background 畫的素色牆壁與地板
+        screen.blit(drive_room_day_img, (-camera_offset_x, 0))
+        return
+
+    # 圖片載入失敗，或晚上還沒有對應背景圖片時，改用原本手繪的樣式
     # 畫一個大的駕駛窗
     cockpit_window_rect = pygame.Rect(20 - camera_offset_x, 80, 300, 150)
     pygame.draw.rect(screen, WHITE, cockpit_window_rect) # 窗戶玻璃
@@ -883,8 +965,8 @@ def draw_side_chair(x_pos, camera_offset_x):
     pygame.draw.rect(screen, DARK_BROWN, (x_pos - 10 - camera_offset_x, HEIGHT - FLOOR_HEIGHT - seat_height, seat_depth, seat_height)) # 座椅正面
 
 def draw_old_lady(camera_offset_x):
-    """繪製老太太 NPC（僅在車廂一場景顯示，用 granny.png 取代車廂一的第一張椅子）"""
-    if current_scene != OLD_LADY_SCENE:
+    """繪製老太太 NPC（僅在車廂一場景、且白天時顯示，用 granny.png 取代車廂一的第一張椅子）"""
+    if current_scene != OLD_LADY_SCENE or not is_daytime():
         return
     screen_rect = old_lady_rect.move(-camera_offset_x, 0)
     if granny_img:
@@ -1241,7 +1323,7 @@ def draw_interact_hint(camera_offset_x):
     """如果玩家靠近可互動的門或 NPC，在角色上方顯示按 F 互動的提示"""
     scene_doors = doors.get(current_scene, {})
     interactables = list(scene_doors.values())
-    if current_scene == OLD_LADY_SCENE:
+    if current_scene == OLD_LADY_SCENE and is_daytime():
         interactables.append(old_lady_interact_rect)
     if current_scene == GIRL_SCENE:
         interactables.append(girl_rect)
@@ -1320,7 +1402,7 @@ while running:
                     game_state = 'INVENTORY'
                 if event.key == pygame.K_l and '老式手電筒' in inventory:
                     flashlight_on = not flashlight_on
-                if event.key == pygame.K_f and current_scene == OLD_LADY_SCENE and conductor_rect.colliderect(old_lady_interact_rect):
+                if event.key == pygame.K_f and current_scene == OLD_LADY_SCENE and is_daytime() and conductor_rect.colliderect(old_lady_interact_rect):
                     # 與老太太互動，開始對話（聊過一次之後改播重複對話）
                     dialogue_lines = old_lady_dialogue_repeat if has_talked_to_old_lady else old_lady_dialogue
                     dialogue_index = 0
