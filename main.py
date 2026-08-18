@@ -733,6 +733,19 @@ def build_doors():
 
 doors = build_doors() # 定義每個場景的互動門
 
+# --- 開場自白：玩家第一次關閉操作手冊後，主角的自言自語 ---
+intro_monologue_lines = [
+    ("主角", "今天是我上任的第一天，心情有點緊張啊……"),
+    ("主角", "自從三年前父親失蹤之後，我便努力的考上鐵路車長這個職位"),
+    ("主角", "只因為對於父親無故失蹤，鐵路公司給出的回答是"),
+    ("主角", "「陳啟明於三年前因精神狀況不佳離職。」"),
+    ("主角", "陳啟明是我的父親"),
+    ("主角", "我不相信……父親不可能就這樣無故消失……"),
+    ("主角", "所以三年後"),
+    ("主角", "我在這裡，決定把真相找出來……"),
+]
+intro_monologue_shown = False # 是否已經播放過開場自白，避免之後重新打開手冊、關閉時又重播一次
+
 # --- 老太太 NPC（用 granny.png 取代車廂一的第一張椅子，圖片本身已經包含椅子） ---
 OLD_LADY_SCENE = 'CARRIAGE_1'
 GRANNY_CHAIR_X = chair_day_positions[1] if len(chair_day_positions) > 1 else 410 # 車廂一第二張椅子的位置
@@ -1791,7 +1804,7 @@ def reset_game():
     global day_night_index, day1_night_triggered, day1_night_resolved, day2_night_triggered, lights_out
     global flashlight_on, facing_direction
     global has_guide, has_girl_painting, has_talked_to_old_lady, active_npc, manual_view
-    global dialogue_lines, dialogue_index, game_over_reason
+    global dialogue_lines, dialogue_index, game_over_reason, intro_monologue_shown
 
     conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - CONDUCTOR_SIZE - 10
     conductor_rect.y = HEIGHT - FLOOR_HEIGHT - CONDUCTOR_SIZE + CONDUCTOR_Y_OFFSET
@@ -1811,6 +1824,7 @@ def reset_game():
     has_guide = False
     has_girl_painting = False
     has_talked_to_old_lady = False
+    intro_monologue_shown = False
     active_npc = None
     manual_view = 'MANUAL'
     dialogue_lines = []
@@ -1936,7 +1950,15 @@ while running:
                 running = False
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_TAB:
-                    game_state = 'PLAYING'
+                    if not intro_monologue_shown:
+                        # 第一次關閉手冊，先播放主角的開場自白，播完才進入遊戲
+                        intro_monologue_shown = True
+                        dialogue_lines = intro_monologue_lines
+                        dialogue_index = 0
+                        active_npc = 'INTRO'
+                        game_state = 'DIALOGUE'
+                    else:
+                        game_state = 'PLAYING'
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_pos = to_logical_pos(event.pos)
                 if manual_tab_manual_rect.collidepoint(mouse_pos):
@@ -2216,6 +2238,9 @@ while running:
                             active_npc = None
                             game_over_reason = "你打開了車門，月台上的人朝你走了過來。"
                             game_state = 'GAME_OVER'
+                        elif active_npc == 'INTRO':
+                            active_npc = None
+                            game_state = 'PLAYING'
                         else:
                             active_npc = None
                             game_state = 'PLAYING'
