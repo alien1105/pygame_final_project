@@ -338,6 +338,35 @@ except pygame.error as e:
     print("將改用原本繪製的連接處背景作為替代。")
     connect_toolroom_day_img = None # 如果圖片載入失敗，設定為 None
 
+# 載入廁所內部圖片（按 F 走進廁所門後顯示的畫面），直接拉伸蓋滿整個畫面
+try:
+    toilet_img_original = pygame.image.load(asset_path('toilet.png')).convert_alpha()
+    toilet_img = pygame.transform.smoothscale(toilet_img_original, (WIDTH, HEIGHT))
+except pygame.error as e:
+    print(f"無法載入圖片 'toilet.png': {e}")
+    print("請確認 'toilet.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    toilet_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入工具間內部、工作桌特寫圖片，做法跟廁所一樣：直接拉伸蓋滿整個畫面
+try:
+    toolroom_img_original = pygame.image.load(asset_path('toolroom.png')).convert_alpha()
+    toolroom_img = pygame.transform.smoothscale(toolroom_img_original, (WIDTH, HEIGHT))
+except pygame.error as e:
+    print(f"無法載入圖片 'toolroom.png': {e}")
+    print("請確認 'toolroom.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    toolroom_img = None # 如果圖片載入失敗，設定為 None
+
+try:
+    tooltable_img_original = pygame.image.load(asset_path('tooltable.png')).convert_alpha()
+    tooltable_img = pygame.transform.smoothscale(tooltable_img_original, (WIDTH, HEIGHT))
+except pygame.error as e:
+    print(f"無法載入圖片 'tooltable.png': {e}")
+    print("請確認 'tooltable.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    tooltable_img = None # 如果圖片載入失敗，設定為 None
+
 # 載入白天座椅圖片，並裁掉圖片邊緣多餘的透明留白，避免椅腳貼地時浮空
 try:
     from PIL import Image as PILImage
@@ -910,21 +939,38 @@ console_cabinet_rect = pygame.Rect(30, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 100,
 console_panel_rect = pygame.Rect(WIDTH // 2 - 330, HEIGHT // 2 - 160, 660, 320)
 _console_slot_size = 130
 _console_slot_gap = 15
-_console_slots_total_width = _console_slot_size * 4 + _console_slot_gap * 3
+_console_slots_total_width = _console_slot_size * 3 + _console_slot_gap * 2
 _console_slot_start_x = console_panel_rect.centerx - _console_slots_total_width // 2
 _console_slot_y = console_panel_rect.y + 90
 
+# 維修員留下的螺絲起子改成放在工具間的工作桌上，這裡不用再放一份
 console_items = [
     {'name': '老式手電筒', 'color': (200, 200, 80), 'rect': pygame.Rect(_console_slot_start_x, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': False},
     {'name': '車站鑰匙', 'color': (190, 190, 190), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap), _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': False},
-    {'name': '維修員留下的螺絲起子', 'color': (150, 110, 70), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap) * 2, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': False},
-    {'name': '《夜間行駛生存指南》', 'color': (90, 60, 40), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap) * 3, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': True},
+    {'name': '《夜間行駛生存指南》', 'color': (90, 60, 40), 'rect': pygame.Rect(_console_slot_start_x + (_console_slot_size + _console_slot_gap) * 2, _console_slot_y, _console_slot_size, _console_slot_size), 'collected': False, 'sealed': True},
 ]
 
 
 def console_has_items_left():
     """置物櫃裡是否還有尚未拾取的道具"""
     return any(not item['collected'] for item in console_items)
+
+
+# --- 連接處的廁所（按 F 進去看廁所內部，再按 F 離開）---
+TOILET_SCENE = 'CONNECTION_2'
+toilet_interact_rect = pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - 180, 100, 180) # 對應圖片中間的廁所門
+toilet_interact_rect.centerx = CONNECTION_WIDTH // 2
+
+# --- 連接處的工具間（按 F 進去，點工作桌可以看特寫、拿走螺絲起子，按 F 逐層退出）---
+TOOLROOM_SCENE = 'CONNECTION_3'
+toolroom_interact_rect = pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - 180, 100, 180) # 對應圖片中間的工具間門
+toolroom_interact_rect.centerx = CONNECTION_WIDTH // 2
+
+work_table_rect = pygame.Rect(309, 129, 214, 197) # 工具間畫面裡工作桌的範圍，滑鼠點擊用
+SCREWDRIVER_TABLE_ITEM_NAME = '維修員留下的螺絲起子'
+screwdriver_table_pos = (367, 225) # 螺絲起子特寫畫面裡道具擺放的位置
+screwdriver_table_rect = pygame.Rect(0, 0, 60, 60)
+screwdriver_table_rect.center = screwdriver_table_pos
 
 
 def draw_simple_button(rect, text, bg_color):
@@ -1443,6 +1489,54 @@ def draw_console_focus():
     screen.blit(hint_surf, (console_panel_rect.centerx - hint_surf.get_width() // 2, console_panel_rect.bottom - 30))
 
 
+def draw_bottom_f_hint(text):
+    """在畫面底部畫一個半透明黑底的提示文字（例如「F : 離開」）"""
+    hint_surf = font_small.render(text, True, WHITE)
+    hint_bg_rect = pygame.Rect(0, 0, hint_surf.get_width() + 24, hint_surf.get_height() + 16)
+    hint_bg_rect.centerx = WIDTH // 2
+    hint_bg_rect.bottom = HEIGHT - 15
+    hint_bg = pygame.Surface(hint_bg_rect.size, pygame.SRCALPHA)
+    hint_bg.fill((0, 0, 0, 170))
+    screen.blit(hint_bg, hint_bg_rect)
+    screen.blit(hint_surf, (hint_bg_rect.centerx - hint_surf.get_width() // 2, hint_bg_rect.centery - hint_surf.get_height() // 2))
+
+
+def draw_toilet_view():
+    """繪製走進廁所後看到的畫面，底部顯示按 F 離開的提示"""
+    if toilet_img:
+        screen.blit(toilet_img, (0, 0))
+    else:
+        screen.fill(BLACK)
+    draw_bottom_f_hint("F : 離開廁所")
+
+
+def draw_toolroom_view():
+    """繪製走進工具間後看到的畫面，可以用滑鼠點工作桌看特寫，底部顯示按 F 離開的提示"""
+    if toolroom_img:
+        screen.blit(toolroom_img, (0, 0))
+    else:
+        screen.fill(BLACK)
+    draw_bottom_f_hint("F : 離開工具間")
+
+
+def draw_tooltable_view():
+    """繪製工作桌特寫畫面，桌上如果還沒被拿走就顯示螺絲起子，底部顯示按 F 離開的提示"""
+    if tooltable_img:
+        screen.blit(tooltable_img, (0, 0))
+    else:
+        screen.fill(BLACK)
+
+    if SCREWDRIVER_TABLE_ITEM_NAME not in inventory:
+        icon = ITEM_ICONS.get(SCREWDRIVER_TABLE_ITEM_NAME)
+        if icon:
+            screen.blit(icon, icon.get_rect(center=screwdriver_table_pos))
+        else:
+            pygame.draw.rect(screen, GOLD, screwdriver_table_rect)
+            pygame.draw.rect(screen, BLACK, screwdriver_table_rect, 2)
+
+    draw_bottom_f_hint("F : 離開工作桌")
+
+
 def draw_inventory_hint():
     """在左上角顯示目前背包內的道具數量"""
     hint_text_surf = font_small.render(f"背包 : {len(inventory)}", True, WHITE)
@@ -1699,6 +1793,10 @@ def draw_interact_hint(camera_offset_x):
             interactables.append(spot['rect'])
     if current_scene == CONSOLE_FOCUS_SCENE:
         interactables.append(console_cabinet_rect)
+    if current_scene == TOILET_SCENE:
+        interactables.append(toilet_interact_rect)
+    if current_scene == TOOLROOM_SCENE:
+        interactables.append(toolroom_interact_rect)
 
     for target_rect in interactables:
         if conductor_rect.colliderect(target_rect):
@@ -1840,6 +1938,12 @@ while running:
                 elif event.key == pygame.K_f and current_scene == CONSOLE_FOCUS_SCENE and conductor_rect.colliderect(console_cabinet_rect):
                     # 聚焦查看操作台置物櫃細節
                     game_state = 'CONSOLE_FOCUS'
+                elif event.key == pygame.K_f and current_scene == TOILET_SCENE and conductor_rect.colliderect(toilet_interact_rect):
+                    # 走進廁所
+                    game_state = 'TOILET_VIEW'
+                elif event.key == pygame.K_f and current_scene == TOOLROOM_SCENE and conductor_rect.colliderect(toolroom_interact_rect):
+                    # 走進工具間
+                    game_state = 'TOOLROOM_VIEW'
                 elif event.key == pygame.K_f and lights_out and not flashlight_on and get_current_scene_door_at(conductor_rect) is not None:
                     # 燈光熄滅時，手電筒沒開就無法開門
                     dialogue_lines = [(" ", "太暗了，需要打開手電筒才能看清楚並打開這扇門。")]
@@ -2170,6 +2274,47 @@ while running:
         draw_night_overlay()
         draw_console_focus()
         draw_inventory_hint()
+
+    elif game_state == 'TOILET_VIEW':
+        # --- 廁所內部畫面的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_f or event.key == pygame.K_ESCAPE:
+                    game_state = 'PLAYING'
+
+        draw_toilet_view()
+
+    elif game_state == 'TOOLROOM_VIEW':
+        # --- 工具間內部畫面的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_f or event.key == pygame.K_ESCAPE:
+                    game_state = 'PLAYING'
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_pos = to_logical_pos(event.pos)
+                if work_table_rect.collidepoint(mouse_pos):
+                    game_state = 'TOOLTABLE_VIEW'
+
+        draw_toolroom_view()
+
+    elif game_state == 'TOOLTABLE_VIEW':
+        # --- 工作桌特寫畫面的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_f or event.key == pygame.K_ESCAPE:
+                    game_state = 'TOOLROOM_VIEW' # 退回工具間，不是直接退出到遊戲
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_pos = to_logical_pos(event.pos)
+                if SCREWDRIVER_TABLE_ITEM_NAME not in inventory and screwdriver_table_rect.collidepoint(mouse_pos):
+                    inventory.append(SCREWDRIVER_TABLE_ITEM_NAME)
+
+        draw_tooltable_view()
 
     # --- D. 更新畫面 ---
     # 把邏輯畫布平滑縮放後貼到全螢幕視窗中央（維持長寬比例，多餘的部分留黑邊）
