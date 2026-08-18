@@ -873,6 +873,17 @@ guide_rules = [
 # --- 第一天白天可收集道具 ---
 inventory = [] # 玩家背包，存放已取得的道具名稱
 
+# --- 獲得道具時跳出的提示（圖案＋文字，過一段時間自動消失）---
+ITEM_POPUP_DURATION = 2400 # 顯示的總毫秒數（含淡出）
+ITEM_POPUP_FADE = 500 # 最後淡出的毫秒數
+item_popup = None # None 表示目前沒有要顯示的提示；有的話是 {'name': 道具名稱, 'start_time': 開始顯示的時間}
+
+
+def show_item_popup(item_name):
+    """觸發「獲得道具」的提示，顯示道具圖案（有的話）跟名稱"""
+    global item_popup
+    item_popup = {'name': item_name, 'start_time': pygame.time.get_ticks()}
+
 # 每個道具點的位置定義：所在場景、可互動範圍、內含道具、是否已被拾取
 item_spots = [
     {
@@ -1537,6 +1548,53 @@ def draw_tooltable_view():
     draw_bottom_f_hint("F : 離開工作桌")
 
 
+def draw_item_popup():
+    """如果剛獲得道具，畫出圖案＋文字的提示卡片，過一段時間會自動淡出消失"""
+    global item_popup
+    if item_popup is None:
+        return
+    elapsed = pygame.time.get_ticks() - item_popup['start_time']
+    if elapsed >= ITEM_POPUP_DURATION:
+        item_popup = None
+        return
+
+    fade_start = ITEM_POPUP_DURATION - ITEM_POPUP_FADE
+    alpha = 255 if elapsed <= fade_start else max(0, round(255 * (ITEM_POPUP_DURATION - elapsed) / ITEM_POPUP_FADE))
+
+    name = item_popup['name']
+    icon = ITEM_ICONS.get(name)
+    icon_surf = None
+    if icon:
+        icon_size = 64
+        scale = min(icon_size / icon.get_width(), icon_size / icon.get_height())
+        icon_surf = pygame.transform.smoothscale(icon, (max(1, round(icon.get_width() * scale)), max(1, round(icon.get_height() * scale))))
+
+    label_surf = font_small.render("獲得道具", True, (230, 200, 120))
+    name_surf = font.render(name, True, WHITE)
+    text_width = max(label_surf.get_width(), name_surf.get_width())
+    text_height = label_surf.get_height() + name_surf.get_height() + 4
+
+    padding = 14
+    icon_area_width = (icon_surf.get_width() + padding) if icon_surf else 0
+    card_width = padding * 2 + icon_area_width + text_width
+    card_height = padding * 2 + max(icon_surf.get_height() if icon_surf else 0, text_height)
+
+    card = pygame.Surface((card_width, card_height), pygame.SRCALPHA)
+    pygame.draw.rect(card, (20, 20, 20, 220), card.get_rect(), border_radius=10)
+    pygame.draw.rect(card, (230, 200, 120, 255), card.get_rect(), 2, border_radius=10)
+
+    if icon_surf:
+        card.blit(icon_surf, (padding, (card_height - icon_surf.get_height()) // 2))
+    text_x = padding + icon_area_width
+    text_y = (card_height - text_height) // 2
+    card.blit(label_surf, (text_x, text_y))
+    card.blit(name_surf, (text_x, text_y + label_surf.get_height() + 4))
+
+    card.set_alpha(alpha)
+    card_rect = card.get_rect(midtop=(WIDTH // 2, 60))
+    screen.blit(card, card_rect)
+
+
 def draw_inventory_hint():
     """在左上角顯示目前背包內的道具數量"""
     hint_text_surf = font_small.render(f"背包 : {len(inventory)}", True, WHITE)
@@ -1929,6 +1987,7 @@ while running:
                     # 撿拾道具
                     item_spot = get_item_spot_at(current_scene, conductor_rect)
                     inventory.extend(item_spot['items'])
+                    show_item_popup(item_spot['items'][-1])
                     item_spot['collected'] = True
                     pickup_line = (" ", f"獲得了「{ '、'.join(item_spot['items']) }」。")
                     dialogue_lines = item_spot.get('reveal_lines', []) + [pickup_line]
@@ -2100,6 +2159,7 @@ while running:
                             if not has_girl_painting:
                                 has_girl_painting = True
                                 inventory.append('小女孩的畫')
+                                show_item_popup('小女孩的畫')
                             active_npc = None
                             game_state = 'PLAYING'
                         elif active_npc == 'NIGHT1_INTRO':
@@ -2264,9 +2324,11 @@ while running:
                     elif item['name'] == '《夜間行駛生存指南》':
                         has_guide = True # 生存指南不放進背包，改成按 TAB 查看
                         item['collected'] = True
+                        show_item_popup(item['name'])
                     else:
                         inventory.append(item['name'])
                         item['collected'] = True
+                        show_item_popup(item['name'])
                     break
 
         draw_background(camera_x)
@@ -2313,8 +2375,12 @@ while running:
                 mouse_pos = to_logical_pos(event.pos)
                 if SCREWDRIVER_TABLE_ITEM_NAME not in inventory and screwdriver_table_rect.collidepoint(mouse_pos):
                     inventory.append(SCREWDRIVER_TABLE_ITEM_NAME)
+                    show_item_popup(SCREWDRIVER_TABLE_ITEM_NAME)
 
         draw_tooltable_view()
+
+    # 獲得道具的提示卡片：不管目前在哪個畫面狀態，都疊在最上層顯示，過一段時間自動淡出
+    draw_item_popup()
 
     # --- D. 更新畫面 ---
     # 把邏輯畫布平滑縮放後貼到全螢幕視窗中央（維持長寬比例，多餘的部分留黑邊）
