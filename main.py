@@ -287,12 +287,12 @@ TRAIN_NIGHT_WINDOW_CENTERS_ORIGINAL = [355, 890, 2435, 2960]
 
 # 載入駕駛室白天背景圖片，直接拉伸蓋滿整個畫面（800x400），不維持原始長寬比例
 try:
-    drive_room_day_img_original = pygame.image.load(asset_path('drive_room_day.png')).convert_alpha()
+    drive_room_day_img_original = pygame.image.load(asset_path('drive_room_day_locked.png')).convert_alpha()
     drive_room_day_img = pygame.transform.smoothscale(drive_room_day_img_original, (WIDTH, HEIGHT))
     COCKPIT_WIDTH = WIDTH # 駕駛艙圖片現在直接蓋滿整個畫面寬度，不用再左右捲動
 except pygame.error as e:
-    print(f"無法載入圖片 'drive_room_day.png': {e}")
-    print("請確認 'drive_room_day.png' 檔案與 main.py 在同一個資料夾中。")
+    print(f"無法載入圖片 'drive_room_day_locked.png': {e}")
+    print("請確認 'drive_room_day_locked.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用原本繪製的駕駛艙背景作為替代。")
     drive_room_day_img = None # 如果圖片載入失敗，設定為 None
 
@@ -305,6 +305,38 @@ except pygame.error as e:
     print("請確認 'drive_room_night.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用原本繪製的駕駛艙背景作為替代。")
     drive_room_night_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入連接處白天背景圖片：CONNECTION_1／CONNECTION_4（車廂間的一般通道）用 connect_day，
+# CONNECTION_2（廁所）用 connect_toilet_day，CONNECTION_3（工具間）用 connect_toolroom_day。
+# 左右拉伸1.25倍、上下蓋滿整個畫面高度；這個拉伸後的寬度直接當作連接處場景的世界寬度，
+# 這樣往前一節／下一節車廂的門（在世界的最左、最右邊）才會剛好對齊圖片邊緣。
+CONNECTION_WIDTH = round(CONNECTION_WIDTH * 1.25)
+try:
+    connect_day_img_original = pygame.image.load(asset_path('connect_day.png')).convert_alpha()
+    connect_day_img = pygame.transform.smoothscale(connect_day_img_original, (CONNECTION_WIDTH, HEIGHT))
+except pygame.error as e:
+    print(f"無法載入圖片 'connect_day.png': {e}")
+    print("請確認 'connect_day.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用原本繪製的連接處背景作為替代。")
+    connect_day_img = None # 如果圖片載入失敗，設定為 None
+
+try:
+    connect_toilet_day_img_original = pygame.image.load(asset_path('connect_toilet_day.png')).convert_alpha()
+    connect_toilet_day_img = pygame.transform.smoothscale(connect_toilet_day_img_original, (CONNECTION_WIDTH, HEIGHT))
+except pygame.error as e:
+    print(f"無法載入圖片 'connect_toilet_day.png': {e}")
+    print("請確認 'connect_toilet_day.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用原本繪製的連接處背景作為替代。")
+    connect_toilet_day_img = None # 如果圖片載入失敗，設定為 None
+
+try:
+    connect_toolroom_day_img_original = pygame.image.load(asset_path('connect_toolroom_day.png')).convert_alpha()
+    connect_toolroom_day_img = pygame.transform.smoothscale(connect_toolroom_day_img_original, (CONNECTION_WIDTH, HEIGHT))
+except pygame.error as e:
+    print(f"無法載入圖片 'connect_toolroom_day.png': {e}")
+    print("請確認 'connect_toolroom_day.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用原本繪製的連接處背景作為替代。")
+    connect_toolroom_day_img = None # 如果圖片載入失敗，設定為 None
 
 # 載入白天座椅圖片，並裁掉圖片邊緣多餘的透明留白，避免椅腳貼地時浮空
 try:
@@ -363,6 +395,38 @@ except Exception as e:
     print("請確認 'granny.png' 檔案與 main.py 在同一個資料夾中。")
     print("老太太將改用方塊繪製作為替代。")
     granny_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入小女孩專用圖片（已經包含椅子跟人物本身，取代車廂二的第四張椅子）。
+# 這張圖片背景是純黑色、沒有透明度，用亮度門檻去背（跟角色走路動畫用的手法一樣），
+# 只留下夠大的連通區域再往外擴張兩圈，避免深色的頭髮、制服被誤判成背景挖空。
+try:
+    from scipy import ndimage
+
+    girl_pil = PILImage.open(asset_path('little_girl.png')).convert('RGB')
+    girl_arr = np.array(girl_pil)
+    girl_rgba_arr = np.dstack([girl_arr, np.full(girl_arr.shape[:2], 255, dtype=np.uint8)])
+    girl_background = girl_arr.max(axis=2) < 15 # 純黑背景，跟人物的深色衣服/頭髮還是有落差
+    girl_labeled, girl_num_components = ndimage.label(girl_background)
+    if girl_num_components > 0:
+        girl_sizes = ndimage.sum(girl_background, girl_labeled, range(1, girl_num_components + 1))
+        girl_large_components = [idx + 1 for idx, size in enumerate(girl_sizes) if size > 500]
+        girl_background = np.isin(girl_labeled, girl_large_components)
+        girl_background = ndimage.binary_dilation(girl_background, iterations=2)
+    girl_rgba_arr[girl_background, 3] = 0
+    girl_cut_pil = PILImage.fromarray(girl_rgba_arr, 'RGBA')
+    girl_cut_bbox = girl_cut_pil.split()[3].getbbox()
+    if girl_cut_bbox:
+        girl_cut_pil = girl_cut_pil.crop(girl_cut_bbox)
+    girl_feathered_arr = feather_alpha_edges(np.array(girl_cut_pil), radius=1.5) # 讓去背邊緣柔和一點，不要太銳利
+    little_girl_img_original = pygame.image.frombuffer(girl_feathered_arr.tobytes(), (girl_feathered_arr.shape[1], girl_feathered_arr.shape[0]), 'RGBA').convert_alpha()
+    LITTLE_GIRL_HEIGHT = 150 # 跟其他椅子（CHAIR_DAY_HEIGHT）一樣高，避免看起來比較大
+    little_girl_width = round(LITTLE_GIRL_HEIGHT * little_girl_img_original.get_width() / little_girl_img_original.get_height())
+    little_girl_img = pygame.transform.smoothscale(little_girl_img_original, (little_girl_width, LITTLE_GIRL_HEIGHT))
+except Exception as e:
+    print(f"無法載入圖片 'little_girl.png': {e}")
+    print("請確認 'little_girl.png' 檔案與 main.py 在同一個資料夾中。")
+    print("小女孩將改用方塊繪製作為替代。")
+    little_girl_img = None # 如果圖片載入失敗，設定為 None
 
 
 def load_item_icon(filename, max_size):
@@ -669,9 +733,18 @@ old_lady_dialogue_repeat = [
 
 has_talked_to_old_lady = False # 是否已經完整聊過第一次對話
 
-# --- 小女孩 NPC ---
-GIRL_SCENE = 'CARRIAGE_2' # 她一個人坐在最後一節車廂
-girl_rect = pygame.Rect(410, HEIGHT - FLOOR_HEIGHT - 80, 50, 80) # 坐在車廂二的座位上
+# --- 小女孩 NPC（用 little_girl.png 取代車廂二的第四張椅子，圖片本身已經包含椅子） ---
+GIRL_SCENE = 'CARRIAGE_2' # 她一個人坐在第二節車廂
+GIRL_CHAIR_X = chair_day_positions[3] if len(chair_day_positions) > 3 else 410 # 車廂二第四張椅子的位置
+if little_girl_img:
+    girl_rect = little_girl_img.get_rect()
+    girl_rect.midbottom = (GIRL_CHAIR_X, HEIGHT - FLOOR_HEIGHT + 20)
+else:
+    girl_rect = pygame.Rect(GIRL_CHAIR_X - 25, HEIGHT - FLOOR_HEIGHT - 80, 50, 80) # 圖片載入失敗時的備用碰撞箱
+
+# 互動判定範圍縮小成人物大小，不要用整張椅子圖片的範圍（椅子含扶手、椅背，比實際人物大很多）
+girl_interact_rect = pygame.Rect(0, 0, 40, 80)
+girl_interact_rect.midbottom = girl_rect.midbottom
 
 # 小女孩第一天的對話劇情
 girl_dialogue = [
@@ -1102,7 +1175,7 @@ def draw_background(camera_offset_x):
     if 'CARRIAGE' in current_scene:
         draw_carriage_scene(camera_offset_x, current_scene)
     elif 'CONNECTION' in current_scene:
-        draw_connection_scene(camera_offset_x)
+        draw_connection_scene(camera_offset_x, current_scene)
     elif current_scene == 'COCKPIT':
         draw_cockpit_scene(camera_offset_x)
 
@@ -1120,17 +1193,23 @@ def draw_carriage_scene(camera_offset_x, scene_name):
             screen.blit(train_night_img, (tile_index * train_night_tile_step - camera_offset_x, 0))
 
     # 畫座椅：依照背景圖片裡窗戶的位置擺放；圖片載入失敗時才用原本繪製的樣式（依車廂實際寬度平均分佈）
-    # 車廂一的第一張椅子改由 granny.png 取代（該圖片本身已經包含椅子），這裡跳過不重複畫
+    # 車廂一的第一張椅子改由 granny.png 取代、車廂二的第四張椅子改由 little_girl.png 取代
+    # （這兩張圖片本身都已經包含椅子），這裡跳過不重複畫
     if is_day and chair_day_img and chair_day_positions:
         for pos in chair_day_positions:
             if scene_name == OLD_LADY_SCENE and pos == GRANNY_CHAIR_X:
+                continue
+            if scene_name == GIRL_SCENE and pos == GIRL_CHAIR_X:
                 continue
             chair_rect = chair_day_img.get_rect()
             chair_rect.midbottom = (pos - camera_offset_x, HEIGHT - FLOOR_HEIGHT + 20)
             screen.blit(chair_day_img, chair_rect)
     elif not is_day and chair_night_img and chair_night_positions:
-        # 晚上老太太不出現，這裡不用跳過位置，正常畫出完整的椅子
+        # 晚上老太太不出現、不用跳過位置；小女孩晚上還在，要跳過對應位置（用容許誤差比對，
+        # 因為晚上跟白天的座椅位置是分別計算的，不會完全一樣）
         for pos in chair_night_positions:
+            if scene_name == GIRL_SCENE and abs(pos - GIRL_CHAIR_X) < 30:
+                continue
             chair_rect = chair_night_img.get_rect()
             chair_rect.midbottom = (pos - camera_offset_x, HEIGHT - FLOOR_HEIGHT + 20)
             screen.blit(chair_night_img, chair_rect)
@@ -1185,16 +1264,28 @@ def draw_cockpit_scene(camera_offset_x):
 
     # 駕駛艙的出口門（不畫方塊，但互動邏輯保留在 doors 字典裡）
 
-def draw_connection_scene(camera_offset_x):
-    """繪製連接處的物件 (廁所、下車門、通道門)"""
-    # 畫廁所門
-    toilet_rect = pygame.Rect(150 - camera_offset_x, HEIGHT - FLOOR_HEIGHT - 180, 100, 180)
-    pygame.draw.rect(screen, DARK_GRAY, toilet_rect)
-    pygame.draw.rect(screen, BLACK, toilet_rect, 4)
-    # 畫下車門
-    exit_door_rect = pygame.Rect(CONNECTION_WIDTH / 2 - 60 - camera_offset_x, 80, 120, 250)
-    pygame.draw.rect(screen, (50, 50, 80), exit_door_rect)
-    pygame.draw.rect(screen, BLACK, exit_door_rect, 4)
+def draw_connection_scene(camera_offset_x, scene_name):
+    """繪製連接處的背景圖片：CONNECTION_2 是廁所、CONNECTION_3 是工具間，其他是一般通道。
+    圖片寬度跟連接處的世界寬度是同一個值，所以用跟其他場景一樣的攝影機轉換來貼圖，
+    圖片邊緣就會剛好對齊往前一節／下一節車廂的門；畫面比世界寬時，左右多出來的地方畫成黑邊。"""
+    if scene_name == 'CONNECTION_2':
+        connect_img = connect_toilet_day_img
+    elif scene_name == 'CONNECTION_3':
+        connect_img = connect_toolroom_day_img
+    else:
+        connect_img = connect_day_img
+
+    if connect_img:
+        screen.fill(BLACK)
+        screen.blit(connect_img, (-camera_offset_x, 0))
+    else:
+        # 圖片載入失敗時，改用原本手繪的樣式
+        toilet_rect = pygame.Rect(150 - camera_offset_x, HEIGHT - FLOOR_HEIGHT - 180, 100, 180)
+        pygame.draw.rect(screen, DARK_GRAY, toilet_rect)
+        pygame.draw.rect(screen, BLACK, toilet_rect, 4)
+        exit_door_rect = pygame.Rect(CONNECTION_WIDTH / 2 - 60 - camera_offset_x, 80, 120, 250)
+        pygame.draw.rect(screen, (50, 50, 80), exit_door_rect)
+        pygame.draw.rect(screen, BLACK, exit_door_rect, 4)
     # 往上一節／下一節車廂的門（不畫方塊，但互動邏輯保留在 doors 字典裡）
 
 def draw_side_chair(x_pos, camera_offset_x):
@@ -1231,12 +1322,15 @@ def draw_old_lady(camera_offset_x):
 
 
 def draw_girl(camera_offset_x):
-    """繪製小女孩 NPC（僅在車廂二場景顯示）"""
+    """繪製小女孩 NPC（僅在車廂二場景顯示，用 little_girl.png 取代車廂二的第四張椅子）"""
     if current_scene != GIRL_SCENE:
         return
     screen_rect = girl_rect.move(-camera_offset_x, 0)
-    pygame.draw.rect(screen, PINK, screen_rect)
-    pygame.draw.circle(screen, PINK, (screen_rect.centerx, screen_rect.top - 12), 12) # 頭部
+    if little_girl_img:
+        screen.blit(little_girl_img, screen_rect)
+    else:
+        pygame.draw.rect(screen, PINK, screen_rect)
+        pygame.draw.circle(screen, PINK, (screen_rect.centerx, screen_rect.top - 12), 12) # 頭部
 
 
 def draw_old_worker(camera_offset_x):
@@ -1597,7 +1691,7 @@ def draw_interact_hint(camera_offset_x):
     if current_scene == OLD_LADY_SCENE and is_daytime():
         interactables.append(old_lady_interact_rect)
     if current_scene == GIRL_SCENE:
-        interactables.append(girl_rect)
+        interactables.append(girl_interact_rect)
     if current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX:
         interactables.append(old_worker_rect)
     for spot in item_spots:
@@ -1721,7 +1815,7 @@ while running:
                     dialogue_index = 0
                     active_npc = 'OLD_LADY'
                     game_state = 'DIALOGUE'
-                elif event.key == pygame.K_f and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_rect):
+                elif event.key == pygame.K_f and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_interact_rect):
                     # 與小女孩互動，開始對話（已經拿過畫的話改播重複對話）
                     dialogue_lines = girl_dialogue_repeat if has_girl_painting else girl_dialogue
                     dialogue_index = 0
@@ -1825,10 +1919,14 @@ while running:
             conductor_img = pygame.transform.flip(current_frame, True, False) if facing_direction == 'RIGHT' else current_frame
 
         camera_x = conductor_rect.centerx - (WIDTH // 2)
-        if camera_x < 0:
-            camera_x = 0
-        if camera_x > current_world_width - WIDTH:
-            camera_x = current_world_width - WIDTH
+        if current_world_width <= WIDTH:
+            # 場景比畫面窄（例如連接處），直接置中顯示，不用捲動
+            camera_x = (current_world_width - WIDTH) // 2
+        else:
+            if camera_x < 0:
+                camera_x = 0
+            if camera_x > current_world_width - WIDTH:
+                camera_x = current_world_width - WIDTH
 
         if lights_out and current_scene == 'COCKPIT':
             # 玩家已返回駕駛室，接續播放敲門劇情
