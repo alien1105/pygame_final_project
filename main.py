@@ -1,8 +1,14 @@
 import pygame
 import sys
+import os
 
 # 1. 遊戲初始化
 pygame.init()
+
+
+def asset_path(filename):
+    """圖片、圖檔等素材都放在 pictures 資料夾裡，統一組出正確路徑"""
+    return os.path.join('pictures', filename)
 
 # 2. 設定視窗大小與標題
 WIDTH, HEIGHT = 800, 400 # 遊戲畫面的邏輯解析度（所有繪圖座標都以這個尺寸為準）
@@ -99,7 +105,7 @@ try:
     import numpy as np
     from scipy import ndimage
 
-    gif = Image.open('main_character_walk2.gif')
+    gif = Image.open(asset_path('main_character_walk2.gif'))
     crop_w = CONDUCTOR_WALK_CROP[2] - CONDUCTOR_WALK_CROP[0]
     crop_h = CONDUCTOR_WALK_CROP[3] - CONDUCTOR_WALK_CROP[1]
     scaled_h = CONDUCTOR_SIZE
@@ -140,16 +146,27 @@ except Exception as e:
     conductor_walk_frames = []
     conductor_walk_durations = []
     try:
-        conductor_img_original = pygame.image.load('main_character.png').convert_alpha()
+        conductor_img_original = pygame.image.load(asset_path('main_character.png')).convert_alpha()
         conductor_img = pygame.transform.scale(conductor_img_original, (CONDUCTOR_SIZE, CONDUCTOR_SIZE))
     except pygame.error as e2:
         print(f"無法載入圖片 'main_character.png': {e2}")
         print("將使用藍色方塊作為替代。")
         conductor_img = None
 
+# 載入主頁背景音樂（26秒一個循環，進到主頁就重複播放，離開主頁就停止）
+music_volume = 0.5 # 音量（0.0~1.0），開始畫面跟遊戲裡的暫停選單都能調整
+try:
+    pygame.mixer.music.load(os.path.join('sound', '859529__notmeat2020__stems-4-santuario-f-minor.wav'))
+    pygame.mixer.music.set_volume(music_volume)
+    start_menu_music_loaded = True
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入主頁背景音樂: {e}")
+    print("請確認 sound 資料夾裡有該音樂檔案。")
+    start_menu_music_loaded = False
+
 # 載入開始畫面的背景圖片
 try:
-    cover_img_original = pygame.image.load('cover.png').convert()
+    cover_img_original = pygame.image.load(asset_path('cover.png')).convert()
     cover_img = pygame.transform.scale(cover_img_original, (WIDTH, HEIGHT))
 except pygame.error as e:
     print(f"無法載入圖片 'cover.png': {e}")
@@ -159,8 +176,8 @@ except pygame.error as e:
 
 # 載入開始畫面的標題圖片
 try:
-    title_img_original = pygame.image.load('title.png').convert_alpha()
-    TITLE_IMG_WIDTH = 280
+    title_img_original = pygame.image.load(asset_path('title.png')).convert_alpha()
+    TITLE_IMG_WIDTH = 220 # 縮小一點，讓下面三個按鈕（含設定）疊起來還有空間
     title_img_height = round(TITLE_IMG_WIDTH * title_img_original.get_height() / title_img_original.get_width())
     title_img = pygame.transform.smoothscale(title_img_original, (TITLE_IMG_WIDTH, title_img_height))
 except pygame.error as e:
@@ -169,13 +186,46 @@ except pygame.error as e:
     print("將改用文字標題作為替代。")
     title_img = None # 如果圖片載入失敗，設定為 None
 
+# 載入開始畫面的「開始遊戲」「退出遊戲」「設定」按鈕圖片（鐵牌造型），維持原始長寬比例縮放
+BUTTON_IMG_WIDTH = 165 # 三個按鈕統一用這個寬度，維持一樣大小
+try:
+    start_game_img_original = pygame.image.load(asset_path('start_game.png')).convert_alpha()
+    start_game_img_height = round(BUTTON_IMG_WIDTH * start_game_img_original.get_height() / start_game_img_original.get_width())
+    start_game_img = pygame.transform.smoothscale(start_game_img_original, (BUTTON_IMG_WIDTH, start_game_img_height))
+except pygame.error as e:
+    print(f"無法載入圖片 'start_game.png': {e}")
+    print("請確認 'start_game.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用文字方塊按鈕作為替代。")
+    start_game_img = None # 如果圖片載入失敗，設定為 None
+
+try:
+    exit_game_img_original = pygame.image.load(asset_path('exit_game.png')).convert_alpha()
+    exit_game_img_height = round(BUTTON_IMG_WIDTH * exit_game_img_original.get_height() / exit_game_img_original.get_width())
+    exit_game_img = pygame.transform.smoothscale(exit_game_img_original, (BUTTON_IMG_WIDTH, exit_game_img_height))
+except pygame.error as e:
+    print(f"無法載入圖片 'exit_game.png': {e}")
+    print("請確認 'exit_game.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用文字方塊按鈕作為替代。")
+    exit_game_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入「設定」按鈕圖片（同樣是鐵牌造型），跟開始／退出遊戲用同樣的寬度，維持原始長寬比例縮放
+try:
+    setting_img_original = pygame.image.load(asset_path('setting.png')).convert_alpha()
+    setting_img_height = round(BUTTON_IMG_WIDTH * setting_img_original.get_height() / setting_img_original.get_width())
+    setting_img = pygame.transform.smoothscale(setting_img_original, (BUTTON_IMG_WIDTH, setting_img_height))
+except pygame.error as e:
+    print(f"無法載入圖片 'setting.png': {e}")
+    print("請確認 'setting.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用文字方塊按鈕作為替代。")
+    setting_img = None # 如果圖片載入失敗，設定為 None
+
 # 載入操作手冊／生存指南畫面的背景圖片（攤開的筆記本），先裁掉圖片邊緣多餘的透明留白，
 # 再拉伸蓋滿畫面（左側留一小條空間放書籤標籤，不維持原始長寬比例）
 MANUAL_TAB_COLUMN_WIDTH = 150 # 左側留給書籤標籤的寬度
 try:
     from PIL import Image as PILImage
 
-    manual_bg_pil = PILImage.open('生存指南_內頁.png').convert('RGBA')
+    manual_bg_pil = PILImage.open(asset_path('生存指南_內頁.png')).convert('RGBA')
     manual_bg_bbox = manual_bg_pil.split()[3].getbbox() # 只用透明度找出書本實際內容範圍
     if manual_bg_bbox:
         manual_bg_pil = manual_bg_pil.crop(manual_bg_bbox)
@@ -193,7 +243,7 @@ except Exception as e:
 # 車廂用兩張完整的圖片並排組成，車廂寬度改成剛好是圖片寬度的兩倍）
 TRAIN_DAY_TILE_COUNT = 2
 try:
-    train_day_img_original = pygame.image.load('train_day.png').convert_alpha()
+    train_day_img_original = pygame.image.load(asset_path('train_day.png')).convert_alpha()
     train_day_scale = HEIGHT / train_day_img_original.get_height()
     train_day_tile_width = round(train_day_img_original.get_width() * train_day_scale)
     train_day_img = pygame.transform.smoothscale(train_day_img_original, (train_day_tile_width, HEIGHT))
@@ -217,7 +267,7 @@ TRAIN_DAY_WINDOW_CENTERS_ORIGINAL = [345, 915, 2405, 2975]
 # 載入晚上車廂背景圖片，做法跟白天車廂完全一樣（兩張完整圖片並排組成車廂）
 TRAIN_NIGHT_TILE_COUNT = 2
 try:
-    train_night_img_original = pygame.image.load('train_night.png').convert_alpha()
+    train_night_img_original = pygame.image.load(asset_path('train_night.png')).convert_alpha()
     train_night_scale = HEIGHT / train_night_img_original.get_height()
     train_night_tile_width = round(train_night_img_original.get_width() * train_night_scale)
     train_night_img = pygame.transform.smoothscale(train_night_img_original, (train_night_tile_width, HEIGHT))
@@ -237,7 +287,7 @@ TRAIN_NIGHT_WINDOW_CENTERS_ORIGINAL = [355, 890, 2435, 2960]
 
 # 載入駕駛室白天背景圖片，直接拉伸蓋滿整個畫面（800x400），不維持原始長寬比例
 try:
-    drive_room_day_img_original = pygame.image.load('drive_room_day.png').convert_alpha()
+    drive_room_day_img_original = pygame.image.load(asset_path('drive_room_day.png')).convert_alpha()
     drive_room_day_img = pygame.transform.smoothscale(drive_room_day_img_original, (WIDTH, HEIGHT))
     COCKPIT_WIDTH = WIDTH # 駕駛艙圖片現在直接蓋滿整個畫面寬度，不用再左右捲動
 except pygame.error as e:
@@ -248,7 +298,7 @@ except pygame.error as e:
 
 # 載入駕駛室晚上背景圖片，做法跟白天一樣：直接拉伸蓋滿整個畫面
 try:
-    drive_room_night_img_original = pygame.image.load('drive_room_night.png').convert_alpha()
+    drive_room_night_img_original = pygame.image.load(asset_path('drive_room_night.png')).convert_alpha()
     drive_room_night_img = pygame.transform.smoothscale(drive_room_night_img_original, (WIDTH, HEIGHT))
 except pygame.error as e:
     print(f"無法載入圖片 'drive_room_night.png': {e}")
@@ -262,7 +312,7 @@ try:
 
     import numpy as np
 
-    chair_pil = PILImage.open('chair_day.png').convert('RGBA')
+    chair_pil = PILImage.open(asset_path('chair_day.png')).convert('RGBA')
     chair_alpha_bbox = chair_pil.split()[3].getbbox() # 只用透明度找出實際內容範圍
     if chair_alpha_bbox:
         chair_pil = chair_pil.crop(chair_alpha_bbox)
@@ -279,7 +329,7 @@ except Exception as e:
 
 # 載入晚上座椅圖片，做法跟白天座椅一樣
 try:
-    chair_night_pil = PILImage.open('chair_night.png').convert('RGBA')
+    chair_night_pil = PILImage.open(asset_path('chair_night.png')).convert('RGBA')
     chair_night_alpha_bbox = chair_night_pil.split()[3].getbbox()
     if chair_night_alpha_bbox:
         chair_night_pil = chair_night_pil.crop(chair_night_alpha_bbox)
@@ -299,7 +349,7 @@ try:
     from PIL import Image as PILImage
     import numpy as np
 
-    granny_pil = PILImage.open('granny.png').convert('RGBA')
+    granny_pil = PILImage.open(asset_path('granny.png')).convert('RGBA')
     granny_alpha_bbox = granny_pil.split()[3].getbbox()
     if granny_alpha_bbox:
         granny_pil = granny_pil.crop(granny_alpha_bbox)
@@ -313,6 +363,34 @@ except Exception as e:
     print("請確認 'granny.png' 檔案與 main.py 在同一個資料夾中。")
     print("老太太將改用方塊繪製作為替代。")
     granny_img = None # 如果圖片載入失敗，設定為 None
+
+
+def load_item_icon(filename, max_size):
+    """載入道具圖示，裁掉邊緣多餘的透明留白，再等比例縮放到剛好放進 max_size 的方框內"""
+    icon_pil = PILImage.open(asset_path(filename)).convert('RGBA')
+    icon_bbox = icon_pil.split()[3].getbbox()
+    if icon_bbox:
+        icon_pil = icon_pil.crop(icon_bbox)
+    icon_img = pygame.image.frombuffer(icon_pil.tobytes(), icon_pil.size, 'RGBA').convert_alpha()
+    scale = min(max_size / icon_img.get_width(), max_size / icon_img.get_height())
+    icon_w = max(1, round(icon_img.get_width() * scale))
+    icon_h = max(1, round(icon_img.get_height() * scale))
+    return pygame.transform.smoothscale(icon_img, (icon_w, icon_h))
+
+
+# 道具圖示：鍵是道具名稱，值是縮放好的圖片，載入失敗的道具會保持原本的色塊顯示
+ITEM_ICONS = {}
+for _icon_item_name, _icon_filename, _icon_max_size in [
+    ('老式手電筒', 'flashlight.png', 110),
+    ('車站鑰匙', 'station_key.png', 110),
+    ('維修員留下的螺絲起子', 'screwdriver.png', 110),
+    ('舊車票', 'old_ticket.png', 24),
+    ('《夜間行駛生存指南》', '生存指南.png', 110),
+]:
+    try:
+        ITEM_ICONS[_icon_item_name] = load_item_icon(_icon_filename, _icon_max_size)
+    except Exception as e:
+        print(f"無法載入道具圖示 '{_icon_filename}': {e}")
 
 # 依照背景圖片裡窗戶的實際位置，計算白天座椅要擺放的世界座標（每張背景圖裡的每扇窗戶前都放一張椅子）
 chair_day_positions = []
@@ -360,12 +438,41 @@ current_scene = 'COCKPIT' # 遊戲從駕駛艙開始
 game_state = 'START' # 初始狀態為遊戲開始畫面
 
 # --- 開始畫面 ---
-start_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 60, 200, 55) # 開始遊戲按鈕
-exit_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 130, 200, 55) # 退出遊戲按鈕
+# 開始遊戲／設定／退出遊戲，由上到下疊放：用鐵牌圖片的實際大小當碰撞箱，圖片載入失敗時才用預設方塊大小
+_start_ui_top = 160 # 按鈕堆疊區塊的最上緣（標題下方）
+_start_ui_gap = 10
 
-# --- 遊戲中按 ESC 跳出的選單（由上到下：繼續遊玩、返回主頁）---
-resume_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 - 40, 200, 55) # 繼續遊玩按鈕
-back_to_menu_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 30, 200, 55) # 返回主頁按鈕
+if start_game_img:
+    start_button_rect = start_game_img.get_rect(midtop=(WIDTH // 2, _start_ui_top))
+else:
+    start_button_rect = pygame.Rect(WIDTH // 2 - 95, _start_ui_top, 190, 55)
+
+# 開始遊戲／退出遊戲中間的設定按鈕（點進去才能調整音量）
+if setting_img:
+    settings_button_rect = setting_img.get_rect(midtop=(WIDTH // 2, start_button_rect.bottom + _start_ui_gap))
+else:
+    settings_button_rect = pygame.Rect(0, start_button_rect.bottom + _start_ui_gap, 110, 34)
+    settings_button_rect.centerx = WIDTH // 2
+
+if exit_game_img:
+    exit_button_rect = exit_game_img.get_rect(midtop=(WIDTH // 2, settings_button_rect.bottom + _start_ui_gap))
+else:
+    exit_button_rect = pygame.Rect(WIDTH // 2 - 95, settings_button_rect.bottom + _start_ui_gap, 190, 55)
+
+# --- 遊戲中按 ESC 跳出的選單（由上到下：繼續遊玩、設定、返回主頁）---
+resume_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 - 70, 200, 55) # 繼續遊玩按鈕
+if setting_img:
+    pause_settings_button_rect = setting_img.get_rect(midtop=(WIDTH // 2, resume_button_rect.bottom + 15))
+else:
+    pause_settings_button_rect = pygame.Rect(0, resume_button_rect.bottom + 15, 110, 34)
+    pause_settings_button_rect.centerx = WIDTH // 2
+back_to_menu_button_rect = pygame.Rect(WIDTH // 2 - 100, pause_settings_button_rect.bottom + 15, 200, 55) # 返回主頁按鈕
+
+# --- 設定畫面（音量滑桿＋返回按鈕），可以從開始畫面或暫停選單點「設定」進來 ---
+settings_return_state = 'START' # 記錄是從哪個畫面點進設定的，按返回才知道要回哪裡
+settings_volume_track_rect = pygame.Rect(0, HEIGHT // 2 - 3, 260, 6)
+settings_volume_track_rect.centerx = WIDTH // 2
+settings_back_button_rect = pygame.Rect(WIDTH // 2 - 90, HEIGHT // 2 + 70, 180, 50)
 
 # --- 天數／白天晚上切換（依序循環：第一天白天 → 第一天晚上 → 第二天白天 → 第二天晚上）---
 DAY_NIGHT_STAGES = ['DAY1_DAY', 'DAY1_NIGHT', 'DAY2_DAY', 'DAY2_NIGHT']
@@ -747,6 +854,55 @@ def console_has_items_left():
     return any(not item['collected'] for item in console_items)
 
 
+def draw_simple_button(rect, text, bg_color):
+    """畫一個簡單的文字方塊按鈕（背景色＋白色邊框＋置中文字）"""
+    pygame.draw.rect(screen, bg_color, rect)
+    pygame.draw.rect(screen, WHITE, rect, 2)
+    text_surf = font_small.render(text, True, WHITE)
+    screen.blit(text_surf, (rect.centerx - text_surf.get_width() // 2, rect.centery - text_surf.get_height() // 2))
+
+
+def draw_volume_slider(track_rect):
+    """畫音量滑桿：左邊「音量」文字、中間滑軌（紅色部分代表目前音量）、右邊百分比數字"""
+    label_surf = font_small.render("音量", True, WHITE)
+    screen.blit(label_surf, (track_rect.x - label_surf.get_width() - 10, track_rect.centery - label_surf.get_height() // 2))
+
+    pygame.draw.rect(screen, DARK_GRAY, track_rect, border_radius=track_rect.height // 2)
+    fill_width = round(track_rect.width * music_volume)
+    if fill_width > 0:
+        fill_rect = pygame.Rect(track_rect.x, track_rect.y, fill_width, track_rect.height)
+        pygame.draw.rect(screen, RED, fill_rect, border_radius=track_rect.height // 2)
+
+    knob_center = (track_rect.x + fill_width, track_rect.centery)
+    pygame.draw.circle(screen, WHITE, knob_center, 9)
+    pygame.draw.circle(screen, BLACK, knob_center, 9, 2)
+
+    percent_surf = font_small.render(f"{round(music_volume * 100)}%", True, WHITE)
+    screen.blit(percent_surf, (track_rect.right + 10, track_rect.centery - percent_surf.get_height() // 2))
+
+
+dragging_volume_slider = False # 滑鼠是否正按著音量滑桿拖曳中
+
+
+def set_volume_from_x(track_rect, x):
+    """依照滑鼠目前的 x 座標換算音量（超出滑軌範圍就夾在 0~1 之間）"""
+    global music_volume
+    ratio = (x - track_rect.x) / track_rect.width
+    music_volume = max(0.0, min(1.0, ratio))
+    pygame.mixer.music.set_volume(music_volume)
+
+
+def handle_volume_slider_mousedown(track_rect, mouse_pos):
+    """如果點下的位置落在滑桿（含一點誤差範圍）上，立刻設定音量、並開始拖曳，回傳是否有點中"""
+    global dragging_volume_slider
+    hit_rect = track_rect.inflate(20, 20) # 稍微加大可點擊範圍，滑桿本身很細，太難點中
+    if not hit_rect.collidepoint(mouse_pos):
+        return False
+    set_volume_from_x(track_rect, mouse_pos[0])
+    dragging_volume_slider = True
+    return True
+
+
 def draw_start_screen():
     """繪製遊戲開始畫面"""
     if cover_img:
@@ -758,7 +914,7 @@ def draw_start_screen():
         screen.fill(BLACK)
 
     if title_img:
-        screen.blit(title_img, (WIDTH // 2 - title_img.get_width() // 2, 35))
+        screen.blit(title_img, (WIDTH // 2 - title_img.get_width() // 2, 15))
     else:
         title_surf = font_title.render("軌遇", True, WHITE)
         screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, HEIGHT // 2 - 130))
@@ -766,17 +922,28 @@ def draw_start_screen():
     #subtitle_surf = font_small.render("列車長模擬器", True, GRAY)
     #screen.blit(subtitle_surf, (WIDTH // 2 - subtitle_surf.get_width() // 2, HEIGHT // 2 - 55))
 
-    pygame.draw.rect(screen, RED, start_button_rect)
-    pygame.draw.rect(screen, WHITE, start_button_rect, 3)
-    start_text_surf = font.render("開始遊戲", True, WHITE)
-    screen.blit(start_text_surf, (start_button_rect.centerx - start_text_surf.get_width() // 2,
-                                  start_button_rect.centery - start_text_surf.get_height() // 2))
+    if start_game_img:
+        screen.blit(start_game_img, start_button_rect)
+    else:
+        pygame.draw.rect(screen, RED, start_button_rect)
+        pygame.draw.rect(screen, WHITE, start_button_rect, 3)
+        start_text_surf = font.render("開始遊戲", True, WHITE)
+        screen.blit(start_text_surf, (start_button_rect.centerx - start_text_surf.get_width() // 2,
+                                      start_button_rect.centery - start_text_surf.get_height() // 2))
 
-    pygame.draw.rect(screen, DARK_GRAY, exit_button_rect)
-    pygame.draw.rect(screen, WHITE, exit_button_rect, 3)
-    exit_text_surf = font.render("退出遊戲", True, WHITE)
-    screen.blit(exit_text_surf, (exit_button_rect.centerx - exit_text_surf.get_width() // 2,
-                                 exit_button_rect.centery - exit_text_surf.get_height() // 2))
+    if setting_img:
+        screen.blit(setting_img, settings_button_rect)
+    else:
+        draw_simple_button(settings_button_rect, "設定", DARK_GRAY)
+
+    if exit_game_img:
+        screen.blit(exit_game_img, exit_button_rect)
+    else:
+        pygame.draw.rect(screen, DARK_GRAY, exit_button_rect)
+        pygame.draw.rect(screen, WHITE, exit_button_rect, 3)
+        exit_text_surf = font.render("退出遊戲", True, WHITE)
+        screen.blit(exit_text_surf, (exit_button_rect.centerx - exit_text_surf.get_width() // 2,
+                                     exit_button_rect.centery - exit_text_surf.get_height() // 2))
 
 
 def draw_pause_menu():
@@ -794,11 +961,30 @@ def draw_pause_menu():
     screen.blit(resume_text_surf, (resume_button_rect.centerx - resume_text_surf.get_width() // 2,
                                    resume_button_rect.centery - resume_text_surf.get_height() // 2))
 
+    if setting_img:
+        screen.blit(setting_img, pause_settings_button_rect)
+    else:
+        draw_simple_button(pause_settings_button_rect, "設定", DARK_GRAY)
+
     pygame.draw.rect(screen, DARK_GRAY, back_to_menu_button_rect)
     pygame.draw.rect(screen, WHITE, back_to_menu_button_rect, 3)
     back_text_surf = font.render("返回主頁", True, WHITE)
     screen.blit(back_text_surf, (back_to_menu_button_rect.centerx - back_text_surf.get_width() // 2,
                                  back_to_menu_button_rect.centery - back_text_surf.get_height() // 2))
+
+
+def draw_settings_screen():
+    """繪製設定畫面（目前只有音量），從開始畫面或暫停選單的「設定」按鈕進來"""
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 200))
+    screen.blit(overlay, (0, 0))
+
+    title_surf = font.render("設定", True, WHITE)
+    screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, HEIGHT // 2 - 90))
+
+    draw_volume_slider(settings_volume_track_rect)
+
+    draw_simple_button(settings_back_button_rect, "返回", DARK_GRAY)
 
 
 # 書籤標籤左側（外露那一側）的鋸齒狀撕紙邊緣，固定的一組偏移量，每次畫面都一樣、不會閃爍
@@ -1099,8 +1285,13 @@ def draw_item_spots(camera_offset_x):
             continue
         marker_rect = pygame.Rect(0, 0, 26, 26)
         marker_rect.center = (spot['rect'].centerx - camera_offset_x, HEIGHT - FLOOR_HEIGHT - 30)
-        pygame.draw.rect(screen, GOLD, marker_rect)
-        pygame.draw.rect(screen, BLACK, marker_rect, 2)
+        icon = ITEM_ICONS.get(spot['items'][0]) if spot['items'] else None
+        if icon:
+            pygame.draw.rect(screen, BLACK, marker_rect, 2)
+            screen.blit(icon, icon.get_rect(center=marker_rect.center))
+        else:
+            pygame.draw.rect(screen, GOLD, marker_rect)
+            pygame.draw.rect(screen, BLACK, marker_rect, 2)
 
     if current_scene == CONSOLE_FOCUS_SCENE and console_has_items_left():
         marker_rect = pygame.Rect(0, 0, 26, 26)
@@ -1128,15 +1319,27 @@ def draw_console_focus():
             pygame.draw.rect(screen, DARK_GRAY, slot_rect, 3)
             label = "(已拾取)"
         elif item.get('sealed'):
-            pygame.draw.rect(screen, item['color'], slot_rect)
+            icon = ITEM_ICONS.get(item['name'])
+            if icon:
+                pygame.draw.rect(screen, BLACK, slot_rect)
+                screen.blit(icon, icon.get_rect(center=slot_rect.center))
+            else:
+                pygame.draw.rect(screen, item['color'], slot_rect)
             pygame.draw.rect(screen, BLACK, slot_rect, 3)
             # 封住暗格的膠帶（交叉貼成 X 型）
             pygame.draw.line(screen, TAPE_COLOR, slot_rect.topleft, slot_rect.bottomright, 12)
             pygame.draw.line(screen, TAPE_COLOR, slot_rect.topright, slot_rect.bottomleft, 12)
             label = "被膠帶封住"
         else:
-            pygame.draw.rect(screen, item['color'], slot_rect)
-            pygame.draw.rect(screen, BLACK, slot_rect, 3)
+            icon = ITEM_ICONS.get(item['name'])
+            if icon:
+                pygame.draw.rect(screen, BLACK, slot_rect)
+                pygame.draw.rect(screen, BLACK, slot_rect, 3)
+                icon_rect = icon.get_rect(center=slot_rect.center)
+                screen.blit(icon, icon_rect)
+            else:
+                pygame.draw.rect(screen, item['color'], slot_rect)
+                pygame.draw.rect(screen, BLACK, slot_rect, 3)
             label = item['name']
 
         label_surf = font_small.render(label, True, WHITE)
@@ -1417,7 +1620,15 @@ def draw_interact_hint(camera_offset_x):
 # 4. 遊戲主迴圈
 dt = 0 # 每一幀經過的毫秒數，供走路動畫計時使用
 running = True
+previous_game_state = None # 用來偵測是否剛進入／離開主頁，藉此開關背景音樂
 while running:
+    if start_menu_music_loaded:
+        if game_state == 'START' and previous_game_state != 'START':
+            pygame.mixer.music.play(-1) # 迴圈播放，音樂檔本身就是26秒的循環
+        elif game_state != 'START' and previous_game_state == 'START':
+            pygame.mixer.music.stop()
+    previous_game_state = game_state
+
     if game_state == 'START':
         # --- 開始畫面的事件與繪圖 ---
         for event in pygame.event.get():
@@ -1427,10 +1638,46 @@ while running:
                 mouse_pos = to_logical_pos(event.pos)
                 if start_button_rect.collidepoint(mouse_pos):
                     game_state = 'MANUAL'
+                elif settings_button_rect.collidepoint(mouse_pos):
+                    settings_return_state = 'START'
+                    game_state = 'SETTINGS'
                 elif exit_button_rect.collidepoint(mouse_pos):
                     running = False
 
         draw_start_screen()
+
+    elif game_state == 'SETTINGS':
+        # --- 設定畫面的事件與繪圖（音量滑桿＋返回鍵，畫在原本畫面上方） ---
+        if settings_return_state == 'START':
+            draw_start_screen()
+        else:
+            draw_background(camera_x)
+            draw_old_lady(camera_x)
+            draw_girl(camera_x)
+            draw_old_worker(camera_x)
+            draw_item_spots(camera_x)
+            draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+            draw_night_overlay()
+            draw_pause_menu()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    game_state = settings_return_state
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_pos = to_logical_pos(event.pos)
+                if handle_volume_slider_mousedown(settings_volume_track_rect, mouse_pos):
+                    pass
+                elif settings_back_button_rect.collidepoint(mouse_pos):
+                    game_state = settings_return_state
+            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                dragging_volume_slider = False
+            if event.type == pygame.MOUSEMOTION and dragging_volume_slider:
+                set_volume_from_x(settings_volume_track_rect, to_logical_pos(event.pos)[0])
+
+        draw_settings_screen()
 
     elif game_state == 'MANUAL':
         # --- 手冊狀態的事件與繪圖 ---
@@ -1619,6 +1866,9 @@ while running:
                 mouse_pos = to_logical_pos(event.pos)
                 if resume_button_rect.collidepoint(mouse_pos):
                     game_state = 'PLAYING'
+                elif pause_settings_button_rect.collidepoint(mouse_pos):
+                    settings_return_state = 'PAUSE_MENU'
+                    game_state = 'SETTINGS'
                 elif back_to_menu_button_rect.collidepoint(mouse_pos):
                     game_state = 'START'
 
