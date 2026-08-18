@@ -322,23 +322,43 @@ def start_choice(prompt, label_a, result_a, label_b, result_b):
     choice_result_b = result_b
     game_state = 'STORY_CHOICE'
 
-doors = { # 定義每個場景的互動門
-    'CARRIAGE_1': {
-        'cockpit_door': pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT),
-        'exit_door': pygame.Rect(CARRIAGE_WIDTH - DOOR_WIDTH, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT),
-    },
-    'CONNECTION': {
-        'entry_door_1': pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT),
-        'exit_door_2': pygame.Rect(CONNECTION_WIDTH - DOOR_WIDTH, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT),
-    },
-    'CARRIAGE_2': {
-        'entry_door': pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT),
-    }
-    ,
-    'COCKPIT': {
-        'exit_door': pygame.Rect(COCKPIT_WIDTH - DOOR_WIDTH, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT),
-    }
-}
+# 場景順序：決定按 F 開門時要往哪個方向移動（每節車廂之間都有一個連接處）
+SCENE_ORDER = [
+    'COCKPIT',
+    'CARRIAGE_1', 'CONNECTION_1',
+    'CARRIAGE_2', 'CONNECTION_2',
+    'CARRIAGE_3', 'CONNECTION_3',
+    'CARRIAGE_4', 'CONNECTION_4',
+    'CARRIAGE_5',
+]
+
+
+def get_scene_width(scene_name):
+    """回傳指定場景的世界寬度"""
+    if 'CARRIAGE' in scene_name:
+        return CARRIAGE_WIDTH
+    elif 'CONNECTION' in scene_name:
+        return CONNECTION_WIDTH
+    else: # COCKPIT
+        return COCKPIT_WIDTH
+
+
+def build_doors():
+    """依照 SCENE_ORDER 自動產生每個場景的互動門：
+    'prev' 通往上一個場景（駕駛室方向），'next' 通往下一個場景（車尾方向）"""
+    result = {}
+    for index, scene_name in enumerate(SCENE_ORDER):
+        scene_doors = {}
+        if index > 0:
+            scene_doors['prev'] = pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT)
+        if index < len(SCENE_ORDER) - 1:
+            scene_width = get_scene_width(scene_name)
+            scene_doors['next'] = pygame.Rect(scene_width - DOOR_WIDTH, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT)
+        result[scene_name] = scene_doors
+    return result
+
+
+doors = build_doors() # 定義每個場景的互動門
 
 # --- 老太太 NPC ---
 OLD_LADY_SCENE = 'CARRIAGE_1'
@@ -459,7 +479,7 @@ item_spots = [
         'collected': False,
     },
     {
-        'scene': 'CONNECTION',
+        'scene': 'CONNECTION_1',
         'rect': pygame.Rect(30, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 70, DOOR_HEIGHT), # 連接處牆壁上
         'items': ['舊路線圖'],
         'collected': False,
@@ -653,22 +673,16 @@ def draw_background(camera_offset_x):
     screen.fill(GRAY)
     
     # 畫車廂地板
-    # 根據當前場景決定地板寬度
-    if 'CARRIAGE' in current_scene:
-        scene_width = CARRIAGE_WIDTH
-    elif current_scene == 'CONNECTION':
-        scene_width = CONNECTION_WIDTH
-    else: # COCKPIT
-        scene_width = COCKPIT_WIDTH
+    scene_width = get_scene_width(current_scene)
     pygame.draw.rect(screen, DARK_GRAY, (0 - camera_offset_x, HEIGHT - FLOOR_HEIGHT, scene_width, FLOOR_HEIGHT))
-    
+
     # 畫上方的行李架
     pygame.draw.rect(screen, DARK_GRAY, (0 - camera_offset_x, 60, scene_width, 15))
 
     # 根據當前場景繪製特定物件
     if 'CARRIAGE' in current_scene:
         draw_carriage_scene(camera_offset_x, current_scene)
-    elif current_scene == 'CONNECTION':
+    elif 'CONNECTION' in current_scene:
         draw_connection_scene(camera_offset_x)
     elif current_scene == 'COCKPIT':
         draw_cockpit_scene(camera_offset_x)
@@ -700,23 +714,11 @@ def draw_carriage_scene(camera_offset_x, scene_name):
             win_rect = pygame.Rect(x - camera_offset_x, 100, 150, 100)
             pygame.draw.rect(screen, WHITE, win_rect)
             pygame.draw.rect(screen, BLACK, win_rect, 3)
-    # 根據是哪個車廂，畫對應的門
-    if scene_name == 'CARRIAGE_1': # 車廂1有兩個門
-        # 畫右邊通往連接處的門
-        exit_door_rect = doors['CARRIAGE_1']['exit_door']
-        exit_door_screen_rect = exit_door_rect.move(-camera_offset_x, 0)
-        pygame.draw.rect(screen, DARK_BROWN, exit_door_screen_rect)
-        pygame.draw.rect(screen, BLACK, exit_door_screen_rect, 4)
-        # 畫左邊通往駕駛艙的門
-        cockpit_door_rect = doors['CARRIAGE_1']['cockpit_door']
-        cockpit_door_screen_rect = cockpit_door_rect.move(-camera_offset_x, 0)
-        pygame.draw.rect(screen, DARK_BROWN, cockpit_door_screen_rect)
-        pygame.draw.rect(screen, BLACK, cockpit_door_screen_rect, 4)
-    else: # CARRIAGE_2 只有一個門
-        entry_door_rect = doors['CARRIAGE_2']['entry_door']
-        entry_door_screen_rect = entry_door_rect.move(-camera_offset_x, 0)
-        pygame.draw.rect(screen, DARK_BROWN, entry_door_screen_rect)
-        pygame.draw.rect(screen, BLACK, entry_door_screen_rect, 4)
+    # 畫這節車廂的門（往上一節／下一節場景，頭尾車廂只有一邊有門）
+    for door_rect in doors.get(scene_name, {}).values():
+        door_screen_rect = door_rect.move(-camera_offset_x, 0)
+        pygame.draw.rect(screen, DARK_BROWN, door_screen_rect)
+        pygame.draw.rect(screen, BLACK, door_screen_rect, 4)
 
 def draw_cockpit_scene(camera_offset_x):
     """繪製駕駛艙內的物件"""
@@ -745,10 +747,10 @@ def draw_cockpit_scene(camera_offset_x):
     pygame.draw.circle(screen, GREEN, (x_pos + 90 - camera_offset_x, HEIGHT - FLOOR_HEIGHT - 100), 10)
 
     # 畫駕駛艙的出口門
-    exit_door_rect = doors['COCKPIT']['exit_door']
-    exit_door_screen_rect = exit_door_rect.move(-camera_offset_x, 0)
-    pygame.draw.rect(screen, DARK_BROWN, exit_door_screen_rect)
-    pygame.draw.rect(screen, BLACK, exit_door_screen_rect, 4)
+    for door_rect in doors.get('COCKPIT', {}).values():
+        door_screen_rect = door_rect.move(-camera_offset_x, 0)
+        pygame.draw.rect(screen, DARK_BROWN, door_screen_rect)
+        pygame.draw.rect(screen, BLACK, door_screen_rect, 4)
 
 def draw_connection_scene(camera_offset_x):
     """繪製連接處的物件 (廁所、下車門、通道門)"""
@@ -760,16 +762,11 @@ def draw_connection_scene(camera_offset_x):
     exit_door_rect = pygame.Rect(CONNECTION_WIDTH / 2 - 60 - camera_offset_x, 80, 120, 250)
     pygame.draw.rect(screen, (50, 50, 80), exit_door_rect)
     pygame.draw.rect(screen, BLACK, exit_door_rect, 4)
-    # 畫回到車廂1的門
-    door1_rect = doors['CONNECTION']['entry_door_1']
-    door1_screen_rect = door1_rect.move(-camera_offset_x, 0)
-    pygame.draw.rect(screen, DARK_BROWN, door1_screen_rect)
-    pygame.draw.rect(screen, BLACK, door1_screen_rect, 4)
-    # 畫通往車廂2的門
-    door2_rect = doors['CONNECTION']['exit_door_2']
-    door2_screen_rect = door2_rect.move(-camera_offset_x, 0)
-    pygame.draw.rect(screen, DARK_BROWN, door2_screen_rect)
-    pygame.draw.rect(screen, BLACK, door2_screen_rect, 4)
+    # 畫往上一節／下一節車廂的門
+    for door_rect in doors.get(current_scene, {}).values():
+        door_screen_rect = door_rect.move(-camera_offset_x, 0)
+        pygame.draw.rect(screen, DARK_BROWN, door_screen_rect)
+        pygame.draw.rect(screen, BLACK, door_screen_rect, 4)
 
 def draw_side_chair(x_pos, camera_offset_x):
     """在指定 x 位置繪製一個側著的椅子"""
@@ -1262,33 +1259,17 @@ while running:
                     active_npc = None
                     game_state = 'DIALOGUE'
                 elif event.key == pygame.K_f:
-                    # (場景切換邏輯...)
-                    if current_scene == 'CARRIAGE_1':
-                        if conductor_rect.colliderect(doors['CARRIAGE_1']['exit_door']):
-                            current_scene = 'CONNECTION'
-                            conductor_rect.x = doors['CONNECTION']['entry_door_1'].right + 10
-                            camera_x = 0
-                        elif conductor_rect.colliderect(doors['CARRIAGE_1']['cockpit_door']):
-                            current_scene = 'COCKPIT'
-                            conductor_rect.x = doors['COCKPIT']['exit_door'].left - conductor_rect.width - 10
-                            camera_x = 0
-                    elif current_scene == 'CONNECTION':
-                        if conductor_rect.colliderect(doors['CONNECTION']['entry_door_1']):
-                            current_scene = 'CARRIAGE_1'
-                            conductor_rect.x = doors['CARRIAGE_1']['exit_door'].left - conductor_rect.width - 10
-                            camera_x = conductor_rect.centerx - (WIDTH // 2)
-                        elif conductor_rect.colliderect(doors['CONNECTION']['exit_door_2']):
-                            current_scene = 'CARRIAGE_2'
-                            conductor_rect.x = doors['CARRIAGE_2']['entry_door'].right + 10
-                            camera_x = 0
-                    elif current_scene == 'CARRIAGE_2':
-                        if conductor_rect.colliderect(doors['CARRIAGE_2']['entry_door']):
-                            current_scene = 'CONNECTION'
-                            conductor_rect.x = doors['CONNECTION']['exit_door_2'].left - conductor_rect.width - 10
-                    elif current_scene == 'COCKPIT':
-                        if conductor_rect.colliderect(doors['COCKPIT']['exit_door']):
-                            current_scene = 'CARRIAGE_1'
-                            conductor_rect.x = doors['CARRIAGE_1']['cockpit_door'].right + 10
+                    # 場景切換邏輯：依 SCENE_ORDER 自動判斷要往前一節還是下一節場景移動
+                    scene_doors = doors.get(current_scene, {})
+                    scene_index = SCENE_ORDER.index(current_scene)
+                    if 'prev' in scene_doors and conductor_rect.colliderect(scene_doors['prev']):
+                        prev_scene = SCENE_ORDER[scene_index - 1]
+                        current_scene = prev_scene
+                        conductor_rect.x = doors[prev_scene]['next'].left - conductor_rect.width - 10
+                    elif 'next' in scene_doors and conductor_rect.colliderect(scene_doors['next']):
+                        next_scene = SCENE_ORDER[scene_index + 1]
+                        current_scene = next_scene
+                        conductor_rect.x = doors[next_scene]['prev'].right + 10
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if time_toggle_button_rect.collidepoint(event.pos) and DAY_NIGHT_STAGES[day_night_index] == 'DAY1_NIGHT' and day1_night_triggered and not day1_night_resolved:
                     # 第一天晚上的劇情還沒解完，無法前進到第二天
@@ -1314,12 +1295,7 @@ while running:
                         game_state = 'DIALOGUE'
 
         # B. 遊戲邏輯
-        if 'CARRIAGE' in current_scene:
-            current_world_width = CARRIAGE_WIDTH
-        elif current_scene == 'CONNECTION':
-            current_world_width = CONNECTION_WIDTH
-        else: # COCKPIT
-            current_world_width = COCKPIT_WIDTH
+        current_world_width = get_scene_width(current_scene)
 
         keys = pygame.key.get_pressed()
         is_moving = False
