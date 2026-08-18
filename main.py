@@ -30,12 +30,30 @@ def to_logical_pos(pos):
     logical_y = (y - RENDER_OFFSET[1]) * HEIGHT / RENDER_SIZE[1]
     return (logical_x, logical_y)
 
+
+def feather_alpha_edges(arr, radius=1.5):
+    """把去背後的 RGBA numpy 陣列邊緣做羽化模糊（例如人物、椅子去背後太銳利的鋸齒邊緣）。
+    採用 premultiplied alpha 的方式模糊 RGB，再除回去，避免邊緣出現原本背景顏色的鑲邊。"""
+    import numpy as np
+    from scipy.ndimage import gaussian_filter
+
+    arr = arr.astype(np.float32)
+    alpha = arr[:, :, 3]
+    premult = arr[:, :, :3] * (alpha[:, :, None] / 255.0)
+    blurred_alpha = gaussian_filter(alpha, sigma=radius)
+    blurred_premult = np.dstack([gaussian_filter(premult[:, :, c], sigma=radius) for c in range(3)])
+    safe_alpha = np.maximum(blurred_alpha, 1.0)
+    new_rgb = np.clip(blurred_premult / (safe_alpha[:, :, None] / 255.0), 0, 255)
+    out = np.dstack([new_rgb, np.clip(blurred_alpha, 0, 255)])
+    return out.astype(np.uint8)
+
 # 遊戲常數
 FLOOR_HEIGHT = 50
 FPS = 60
 PLAYER_SPEED = 5
 DOOR_HEIGHT = 200
-DOOR_WIDTH = 80
+DOOR_WIDTH = 10 # 門的視覺／版面配置寬度（用來預留椅子、主角出生位置等的安全距離）
+DOOR_HITBOX_WIDTH = 1 # 門的實際互動碰撞箱寬度（按 F 互動判定用，跟版面配置寬度分開）
 CONDUCTOR_SIZE = 240 # 主角的寬高（原本 160 的 1.5 倍）
 CONDUCTOR_Y_OFFSET = 20 # 主角往下移動的距離
 
@@ -65,6 +83,7 @@ CONDUCTOR_WALK_CROP = (713, 74, 1261, 1054) # main_character_walk2.gif 裡角色
 conductor_walk_frames = []    # 走路動畫的每一張畫格 (pygame Surface)
 conductor_walk_durations = [] # 每一張畫格要停留的毫秒數
 conductor_img = None          # 靜止不動時顯示的畫面（走路動畫的第一格，或備用的靜態圖片）
+CONDUCTOR_VISIBLE_PAD = 0     # conductor_rect（畫布）左右兩側的透明留白寬度，移動邊界判定要扣掉這個，不然會有一大段「空氣牆」
 try:
     from PIL import Image
     import numpy as np
@@ -75,6 +94,7 @@ try:
     crop_h = CONDUCTOR_WALK_CROP[3] - CONDUCTOR_WALK_CROP[1]
     scaled_h = CONDUCTOR_SIZE
     scaled_w = max(1, round(scaled_h * crop_w / crop_h)) # 維持長寬比例，避免角色被拉扁
+    CONDUCTOR_VISIBLE_PAD = (CONDUCTOR_SIZE - scaled_w) // 2
     for i in range(gif.n_frames):
         gif.seek(i)
         frame_rgba = gif.convert('RGBA').crop(CONDUCTOR_WALK_CROP)
@@ -94,6 +114,7 @@ try:
             background = np.isin(labeled, large_components)
             background = ndimage.binary_dilation(background, iterations=2)
         arr[background, 3] = 0
+        arr = feather_alpha_edges(arr, radius=1.5) # 讓去背邊緣柔和一點，不要太銳利
         frame_surf = pygame.image.frombuffer(arr.tobytes(), (arr.shape[1], arr.shape[0]), 'RGBA').convert_alpha()
         frame_surf = pygame.transform.smoothscale(frame_surf, (scaled_w, scaled_h))
         # 貼到透明畫布中央，維持角色尺寸一致
@@ -167,11 +188,14 @@ TRAIN_DAY_WINDOW_CENTERS_ORIGINAL = [345, 915, 2405, 2975]
 try:
     from PIL import Image as PILImage
 
+    import numpy as np
+
     chair_pil = PILImage.open('chair_day.png').convert('RGBA')
     chair_alpha_bbox = chair_pil.split()[3].getbbox() # 只用透明度找出實際內容範圍
     if chair_alpha_bbox:
         chair_pil = chair_pil.crop(chair_alpha_bbox)
-    chair_day_img_original = pygame.image.frombuffer(chair_pil.tobytes(), chair_pil.size, 'RGBA').convert_alpha()
+    chair_arr = feather_alpha_edges(np.array(chair_pil), radius=1.5) # 讓椅子邊緣柔和一點，不要太銳利
+    chair_day_img_original = pygame.image.frombuffer(chair_arr.tobytes(), (chair_arr.shape[1], chair_arr.shape[0]), 'RGBA').convert_alpha()
     CHAIR_DAY_HEIGHT = 150
     chair_day_width = round(CHAIR_DAY_HEIGHT * chair_day_img_original.get_width() / chair_day_img_original.get_height())
     chair_day_img = pygame.transform.smoothscale(chair_day_img_original, (chair_day_width, CHAIR_DAY_HEIGHT))
@@ -180,6 +204,26 @@ except Exception as e:
     print("請確認 'chair_day.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用原本繪製的座椅作為替代。")
     chair_day_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入老太太專用圖片（已經包含椅子跟人物本身，取代車廂一的第一張椅子）
+try:
+    from PIL import Image as PILImage
+    import numpy as np
+
+    granny_pil = PILImage.open('granny.png').convert('RGBA')
+    granny_alpha_bbox = granny_pil.split()[3].getbbox()
+    if granny_alpha_bbox:
+        granny_pil = granny_pil.crop(granny_alpha_bbox)
+    granny_arr = feather_alpha_edges(np.array(granny_pil), radius=1.5) # 讓邊緣柔和一點，不要太銳利
+    granny_img_original = pygame.image.frombuffer(granny_arr.tobytes(), (granny_arr.shape[1], granny_arr.shape[0]), 'RGBA').convert_alpha()
+    GRANNY_HEIGHT = 150 # 跟其他椅子（CHAIR_DAY_HEIGHT）一樣高，避免看起來比較大
+    granny_width = round(GRANNY_HEIGHT * granny_img_original.get_width() / granny_img_original.get_height())
+    granny_img = pygame.transform.smoothscale(granny_img_original, (granny_width, GRANNY_HEIGHT))
+except Exception as e:
+    print(f"無法載入圖片 'granny.png': {e}")
+    print("請確認 'granny.png' 檔案與 main.py 在同一個資料夾中。")
+    print("老太太將改用方塊繪製作為替代。")
+    granny_img = None # 如果圖片載入失敗，設定為 None
 
 # 依照背景圖片裡窗戶的實際位置，計算白天座椅要擺放的世界座標（每張背景圖裡的每扇窗戶前都放一張椅子）
 chair_day_positions = []
@@ -373,19 +417,28 @@ def build_doors():
     for index, scene_name in enumerate(SCENE_ORDER):
         scene_doors = {}
         if index > 0:
-            scene_doors['prev'] = pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT)
+            scene_doors['prev'] = pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_HITBOX_WIDTH, DOOR_HEIGHT)
         if index < len(SCENE_ORDER) - 1:
             scene_width = get_scene_width(scene_name)
-            scene_doors['next'] = pygame.Rect(scene_width - DOOR_WIDTH, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_WIDTH, DOOR_HEIGHT)
+            scene_doors['next'] = pygame.Rect(scene_width - DOOR_HITBOX_WIDTH, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, DOOR_HITBOX_WIDTH, DOOR_HEIGHT)
         result[scene_name] = scene_doors
     return result
 
 
 doors = build_doors() # 定義每個場景的互動門
 
-# --- 老太太 NPC ---
+# --- 老太太 NPC（用 granny.png 取代車廂一的第一張椅子，圖片本身已經包含椅子） ---
 OLD_LADY_SCENE = 'CARRIAGE_1'
-old_lady_rect = pygame.Rect(410, HEIGHT - FLOOR_HEIGHT - 90, 60, 90) # 坐在車廂一的座位上
+GRANNY_CHAIR_X = chair_day_positions[1] if len(chair_day_positions) > 1 else 410 # 車廂一第二張椅子的位置
+if granny_img:
+    old_lady_rect = granny_img.get_rect()
+    old_lady_rect.midbottom = (GRANNY_CHAIR_X, HEIGHT - FLOOR_HEIGHT + 20)
+else:
+    old_lady_rect = pygame.Rect(GRANNY_CHAIR_X - 30, HEIGHT - FLOOR_HEIGHT - 90, 60, 90) # 圖片載入失敗時的備用碰撞箱
+
+# 互動判定範圍縮小成人物大小，不要用整張椅子圖片的範圍（椅子含扶手、椅背，比實際人物大很多）
+old_lady_interact_rect = pygame.Rect(0, 0, 10, 90)
+old_lady_interact_rect.midbottom = old_lady_rect.midbottom
 
 # 老太太第一天的對話劇情，格式為 (說話者, 台詞)
 old_lady_dialogue = [
@@ -747,8 +800,11 @@ def draw_carriage_scene(camera_offset_x, scene_name):
             screen.blit(train_day_img, (tile_index * train_day_tile_step - camera_offset_x, 0))
 
     # 畫座椅：白天依照背景圖片裡窗戶的位置擺放，晚上維持原本繪製的樣式（依車廂實際寬度平均分佈）
+    # 車廂一的第一張椅子改由 granny.png 取代（該圖片本身已經包含椅子），這裡跳過不重複畫
     if is_day and chair_day_img and chair_day_positions:
         for pos in chair_day_positions:
+            if scene_name == OLD_LADY_SCENE and pos == GRANNY_CHAIR_X:
+                continue
             chair_rect = chair_day_img.get_rect()
             chair_rect.midbottom = (pos - camera_offset_x, HEIGHT - FLOOR_HEIGHT + 20)
             screen.blit(chair_day_img, chair_rect)
@@ -763,11 +819,7 @@ def draw_carriage_scene(camera_offset_x, scene_name):
             win_rect = pygame.Rect(x - camera_offset_x, 100, 150, 100)
             pygame.draw.rect(screen, WHITE, win_rect)
             pygame.draw.rect(screen, BLACK, win_rect, 3)
-    # 畫這節車廂的門（往上一節／下一節場景，頭尾車廂只有一邊有門）
-    for door_rect in doors.get(scene_name, {}).values():
-        door_screen_rect = door_rect.move(-camera_offset_x, 0)
-        pygame.draw.rect(screen, DARK_BROWN, door_screen_rect)
-        pygame.draw.rect(screen, BLACK, door_screen_rect, 4)
+    # 這節車廂往上一節／下一節場景的門（不畫方塊，但互動邏輯保留在 doors 字典裡）
 
 def draw_cockpit_scene(camera_offset_x):
     """繪製駕駛艙內的物件"""
@@ -795,11 +847,7 @@ def draw_cockpit_scene(camera_offset_x):
     pygame.draw.circle(screen, RED, (x_pos + 50 - camera_offset_x, HEIGHT - FLOOR_HEIGHT - 105), 10)
     pygame.draw.circle(screen, GREEN, (x_pos + 90 - camera_offset_x, HEIGHT - FLOOR_HEIGHT - 100), 10)
 
-    # 畫駕駛艙的出口門
-    for door_rect in doors.get('COCKPIT', {}).values():
-        door_screen_rect = door_rect.move(-camera_offset_x, 0)
-        pygame.draw.rect(screen, DARK_BROWN, door_screen_rect)
-        pygame.draw.rect(screen, BLACK, door_screen_rect, 4)
+    # 駕駛艙的出口門（不畫方塊，但互動邏輯保留在 doors 字典裡）
 
 def draw_connection_scene(camera_offset_x):
     """繪製連接處的物件 (廁所、下車門、通道門)"""
@@ -811,11 +859,7 @@ def draw_connection_scene(camera_offset_x):
     exit_door_rect = pygame.Rect(CONNECTION_WIDTH / 2 - 60 - camera_offset_x, 80, 120, 250)
     pygame.draw.rect(screen, (50, 50, 80), exit_door_rect)
     pygame.draw.rect(screen, BLACK, exit_door_rect, 4)
-    # 畫往上一節／下一節車廂的門
-    for door_rect in doors.get(current_scene, {}).values():
-        door_screen_rect = door_rect.move(-camera_offset_x, 0)
-        pygame.draw.rect(screen, DARK_BROWN, door_screen_rect)
-        pygame.draw.rect(screen, BLACK, door_screen_rect, 4)
+    # 往上一節／下一節車廂的門（不畫方塊，但互動邏輯保留在 doors 字典裡）
 
 def draw_side_chair(x_pos, camera_offset_x):
     """在指定 x 位置繪製一個側著的椅子"""
@@ -839,12 +883,15 @@ def draw_side_chair(x_pos, camera_offset_x):
     pygame.draw.rect(screen, DARK_BROWN, (x_pos - 10 - camera_offset_x, HEIGHT - FLOOR_HEIGHT - seat_height, seat_depth, seat_height)) # 座椅正面
 
 def draw_old_lady(camera_offset_x):
-    """繪製老太太 NPC（僅在車廂一場景顯示）"""
+    """繪製老太太 NPC（僅在車廂一場景顯示，用 granny.png 取代車廂一的第一張椅子）"""
     if current_scene != OLD_LADY_SCENE:
         return
     screen_rect = old_lady_rect.move(-camera_offset_x, 0)
-    pygame.draw.rect(screen, PURPLE, screen_rect)
-    pygame.draw.circle(screen, PURPLE, (screen_rect.centerx, screen_rect.top - 15), 15) # 頭部
+    if granny_img:
+        screen.blit(granny_img, screen_rect)
+    else:
+        pygame.draw.rect(screen, PURPLE, screen_rect)
+        pygame.draw.circle(screen, PURPLE, (screen_rect.centerx, screen_rect.top - 15), 15) # 頭部
 
 
 def draw_girl(camera_offset_x):
@@ -1195,7 +1242,7 @@ def draw_interact_hint(camera_offset_x):
     scene_doors = doors.get(current_scene, {})
     interactables = list(scene_doors.values())
     if current_scene == OLD_LADY_SCENE:
-        interactables.append(old_lady_rect)
+        interactables.append(old_lady_interact_rect)
     if current_scene == GIRL_SCENE:
         interactables.append(girl_rect)
     if current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX:
@@ -1273,7 +1320,7 @@ while running:
                     game_state = 'INVENTORY'
                 if event.key == pygame.K_l and '老式手電筒' in inventory:
                     flashlight_on = not flashlight_on
-                if event.key == pygame.K_f and current_scene == OLD_LADY_SCENE and conductor_rect.colliderect(old_lady_rect):
+                if event.key == pygame.K_f and current_scene == OLD_LADY_SCENE and conductor_rect.colliderect(old_lady_interact_rect):
                     # 與老太太互動，開始對話（聊過一次之後改播重複對話）
                     dialogue_lines = old_lady_dialogue_repeat if has_talked_to_old_lady else old_lady_dialogue
                     dialogue_index = 0
@@ -1361,10 +1408,11 @@ while running:
             facing_direction = 'RIGHT'
             is_moving = True
 
-        if conductor_rect.left < 0:
-            conductor_rect.left = 0
-        if conductor_rect.right > current_world_width:
-            conductor_rect.right = current_world_width
+        # 用角色實際可見的範圍（扣掉畫布左右透明留白）判斷邊界，避免走到車廂盡頭時還有一大段空氣牆
+        if conductor_rect.left + CONDUCTOR_VISIBLE_PAD < 0:
+            conductor_rect.left = -CONDUCTOR_VISIBLE_PAD
+        if conductor_rect.right - CONDUCTOR_VISIBLE_PAD > current_world_width:
+            conductor_rect.right = current_world_width + CONDUCTOR_VISIBLE_PAD
 
         # 更新走路動畫（GIF 裡的角色本來就面向左邊，面向右邊時要水平翻轉）
         if conductor_walk_frames:
