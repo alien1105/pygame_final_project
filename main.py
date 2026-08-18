@@ -296,6 +296,16 @@ except pygame.error as e:
     print("將改用原本繪製的駕駛艙背景作為替代。")
     drive_room_day_img = None # 如果圖片載入失敗，設定為 None
 
+# 載入駕駛室白天「已取得生存指南」背景圖片，做法跟鎖著的版本一樣：直接拉伸蓋滿整個畫面
+try:
+    drive_room_day_unlocked_img_original = pygame.image.load(asset_path('drive_room_day_unlocked.png')).convert_alpha()
+    drive_room_day_unlocked_img = pygame.transform.smoothscale(drive_room_day_unlocked_img_original, (WIDTH, HEIGHT))
+except pygame.error as e:
+    print(f"無法載入圖片 'drive_room_day_unlocked.png': {e}")
+    print("請確認 'drive_room_day_unlocked.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用鎖著的駕駛室背景作為替代。")
+    drive_room_day_unlocked_img = drive_room_day_img # 解鎖圖片載入失敗時，退回鎖著的圖片
+
 # 載入駕駛室晚上背景圖片，做法跟白天一樣：直接拉伸蓋滿整個畫面
 try:
     drive_room_night_img_original = pygame.image.load(asset_path('drive_room_night.png')).convert_alpha()
@@ -1391,10 +1401,13 @@ def draw_carriage_scene(camera_offset_x, scene_name):
 
 def draw_cockpit_scene(camera_offset_x):
     """繪製駕駛艙內的物件"""
-    if is_daytime() and drive_room_day_img:
+    if is_daytime():
         # 白天使用駕駛室背景圖片，蓋掉 draw_background 畫的素色牆壁與地板
-        screen.blit(drive_room_day_img, (-camera_offset_x, 0))
-        return
+        # 取得生存指南後，置物櫃已經打開過了，改用 unlocked 版本的背景
+        day_img = drive_room_day_unlocked_img if has_guide else drive_room_day_img
+        if day_img:
+            screen.blit(day_img, (-camera_offset_x, 0))
+            return
     if not is_daytime() and drive_room_night_img:
         # 晚上使用駕駛室背景圖片，蓋掉 draw_background 畫的素色牆壁與地板
         screen.blit(drive_room_night_img, (-camera_offset_x, 0))
@@ -2479,6 +2492,8 @@ while running:
                 elif not has_guide and console_box_guide_rect.collidepoint(mouse_pos):
                     has_guide = True # 生存指南不放進背包，改成按 TAB 查看
                     show_item_popup('《夜間行駛生存指南》')
+                    manual_view = 'GUIDE' # 拿到後直接翻開手冊的生存指南頁籤
+                    game_state = 'MANUAL'
 
         draw_box_view()
 
