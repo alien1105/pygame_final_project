@@ -519,6 +519,23 @@ except Exception as e:
     print("小女孩將改用方塊繪製作為替代。")
     little_girl_img = None # 如果圖片載入失敗，設定為 None
 
+# 載入老維修員專用圖片（已經包含椅子跟人物本身，取代車廂三的第三張椅子），做法跟老太太一樣
+try:
+    old_engineer_pil = PILImage.open(asset_path('old_engineer.png')).convert('RGBA')
+    old_engineer_alpha_bbox = old_engineer_pil.split()[3].getbbox()
+    if old_engineer_alpha_bbox:
+        old_engineer_pil = old_engineer_pil.crop(old_engineer_alpha_bbox)
+    old_engineer_arr = feather_alpha_edges(np.array(old_engineer_pil), radius=1.5) # 讓邊緣柔和一點，不要太銳利
+    old_engineer_img_original = pygame.image.frombuffer(old_engineer_arr.tobytes(), (old_engineer_arr.shape[1], old_engineer_arr.shape[0]), 'RGBA').convert_alpha()
+    OLD_ENGINEER_HEIGHT = 150 # 跟其他椅子（CHAIR_DAY_HEIGHT）一樣高，避免看起來比較大
+    old_engineer_width = round(OLD_ENGINEER_HEIGHT * old_engineer_img_original.get_width() / old_engineer_img_original.get_height())
+    old_engineer_img = pygame.transform.smoothscale(old_engineer_img_original, (old_engineer_width, OLD_ENGINEER_HEIGHT))
+except Exception as e:
+    print(f"無法載入圖片 'old_engineer.png': {e}")
+    print("請確認 'old_engineer.png' 檔案與 main.py 在同一個資料夾中。")
+    print("老維修員將改用方塊繪製作為替代。")
+    old_engineer_img = None # 如果圖片載入失敗，設定為 None
+
 
 def load_item_icon(filename, max_size):
     """載入道具圖示，裁掉邊緣多餘的透明留白，再等比例縮放到剛好放進 max_size 的方框內"""
@@ -896,11 +913,21 @@ girl_dialogue_repeat = [
     ("小女孩", "……"),
 ]
 
-# --- 老維修員 NPC（第二天白天起才會出現）---
-OLD_WORKER_SCENE = 'CARRIAGE_2'
+# --- 老維修員 NPC（第二天白天起才會出現，用 old_engineer.png 取代車廂三的第三張椅子，圖片本身已經包含椅子）---
+OLD_WORKER_SCENE = 'CARRIAGE_3'
 OLD_WORKER_MIN_DAY_INDEX = 2 # DAY_NIGHT_STAGES 中 'DAY2_DAY' 的索引
-old_worker_rect = pygame.Rect(700, HEIGHT - FLOOR_HEIGHT - 90, 60, 90) # 坐在車廂二的另一個座位上
-WORKER_COLOR = (90, 110, 90) # 老維修員用暗綠色方塊代表
+OLD_WORKER_CHAIR_X = chair_day_positions[2] if len(chair_day_positions) > 2 else 410 # 車廂三第三張椅子的位置
+if old_engineer_img:
+    old_worker_rect = old_engineer_img.get_rect()
+    old_worker_rect.midbottom = (OLD_WORKER_CHAIR_X, HEIGHT - FLOOR_HEIGHT + 20)
+else:
+    old_worker_rect = pygame.Rect(OLD_WORKER_CHAIR_X - 30, HEIGHT - FLOOR_HEIGHT - 90, 60, 90) # 圖片載入失敗時的備用碰撞箱
+
+# 互動判定範圍縮小成人物大小，不要用整張椅子圖片的範圍（椅子含扶手、椅背，比實際人物大很多）
+old_worker_interact_rect = pygame.Rect(0, 0, 40, 90)
+old_worker_interact_rect.midbottom = old_worker_rect.midbottom
+
+WORKER_COLOR = (90, 110, 90) # 圖片載入失敗時，老維修員改用暗綠色方塊代表；對話框文字顏色也用這個
 
 # 老維修員第二天白天的對話：主線內容
 old_worker_dialogue_intro = [
@@ -1375,22 +1402,27 @@ def draw_carriage_scene(camera_offset_x, scene_name):
             screen.blit(train_night_img, (tile_index * train_night_tile_step - camera_offset_x, 0))
 
     # 畫座椅：依照背景圖片裡窗戶的位置擺放；圖片載入失敗時才用原本繪製的樣式（依車廂實際寬度平均分佈）
-    # 車廂一的第一張椅子改由 granny.png 取代、車廂二的第四張椅子改由 little_girl.png 取代
-    # （這兩張圖片本身都已經包含椅子），這裡跳過不重複畫
+    # 車廂一的第一張椅子改由 granny.png 取代、車廂二的第四張椅子改由 little_girl.png 取代、
+    # 車廂三的第三張椅子在第二天白天起改由 old_engineer.png 取代
+    # （這幾張圖片本身都已經包含椅子），這裡跳過不重複畫
     if is_day and chair_day_img and chair_day_positions:
         for pos in chair_day_positions:
             if scene_name == OLD_LADY_SCENE and pos == GRANNY_CHAIR_X:
                 continue
             if scene_name == GIRL_SCENE and pos == GIRL_CHAIR_X:
                 continue
+            if scene_name == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX and pos == OLD_WORKER_CHAIR_X:
+                continue
             chair_rect = chair_day_img.get_rect()
             chair_rect.midbottom = (pos - camera_offset_x, HEIGHT - FLOOR_HEIGHT + 20)
             screen.blit(chair_day_img, chair_rect)
     elif not is_day and chair_night_img and chair_night_positions:
-        # 晚上老太太不出現、不用跳過位置；小女孩晚上還在，要跳過對應位置（用容許誤差比對，
+        # 晚上老太太不出現、不用跳過位置；小女孩、老維修員晚上還在，要跳過對應位置（用容許誤差比對，
         # 因為晚上跟白天的座椅位置是分別計算的，不會完全一樣）
         for pos in chair_night_positions:
             if scene_name == GIRL_SCENE and abs(pos - GIRL_CHAIR_X) < 30:
+                continue
+            if scene_name == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX and abs(pos - OLD_WORKER_CHAIR_X) < 30:
                 continue
             chair_rect = chair_night_img.get_rect()
             chair_rect.midbottom = (pos - camera_offset_x, HEIGHT - FLOOR_HEIGHT + 20)
@@ -1519,12 +1551,15 @@ def draw_girl(camera_offset_x):
 
 
 def draw_old_worker(camera_offset_x):
-    """繪製老維修員 NPC（第二天白天起，僅在車廂二場景顯示）"""
+    """繪製老維修員 NPC（第二天白天起，僅在車廂三場景顯示，用 old_engineer.png 取代車廂三的第三張椅子）"""
     if current_scene != OLD_WORKER_SCENE or day_night_index < OLD_WORKER_MIN_DAY_INDEX:
         return
     screen_rect = old_worker_rect.move(-camera_offset_x, 0)
-    pygame.draw.rect(screen, WORKER_COLOR, screen_rect)
-    pygame.draw.circle(screen, WORKER_COLOR, (screen_rect.centerx, screen_rect.top - 15), 15) # 頭部
+    if old_engineer_img:
+        screen.blit(old_engineer_img, screen_rect)
+    else:
+        pygame.draw.rect(screen, WORKER_COLOR, screen_rect)
+        pygame.draw.circle(screen, WORKER_COLOR, (screen_rect.centerx, screen_rect.top - 15), 15) # 頭部
 
 
 def draw_inventory_screen():
@@ -1998,7 +2033,7 @@ def draw_interact_hint(camera_offset_x):
         if current_scene == GIRL_SCENE:
             interactables.append(girl_interact_rect)
         if current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX:
-            interactables.append(old_worker_rect)
+            interactables.append(old_worker_interact_rect)
         for spot in item_spots:
             if spot['scene'] == current_scene and not spot['collected'] and day_night_index >= spot.get('min_day_index', 0):
                 interactables.append(spot['rect'])
@@ -2147,7 +2182,7 @@ while running:
                     dialogue_index = 0
                     active_npc = 'GIRL'
                     game_state = 'DIALOGUE'
-                elif event.key == pygame.K_f and not lights_out and current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX and conductor_rect.colliderect(old_worker_rect):
+                elif event.key == pygame.K_f and not lights_out and current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX and conductor_rect.colliderect(old_worker_interact_rect):
                     # 與老維修員互動，開始對話
                     dialogue_lines = build_old_worker_dialogue()
                     dialogue_index = 0
