@@ -78,6 +78,16 @@ font = pygame.font.SysFont("microsoftjhenghei", 28)
 font_small = pygame.font.SysFont("microsoftjhenghei", 20)
 font_title = pygame.font.SysFont("microsoftjhenghei", 64)
 
+# 手寫風格字型，專門給操作手冊／生存指南畫面使用，其他地方仍用上面的一般字型
+try:
+    font_handwriting = pygame.font.Font('ThePeakFontBeta_V0_102.ttf', 28)
+    font_handwriting_small = pygame.font.Font('ThePeakFontBeta_V0_102.ttf', 17)
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入字型 'ThePeakFontBeta_V0_102.ttf': {e}")
+    print("操作手冊／生存指南將改用一般字型作為替代。")
+    font_handwriting = font
+    font_handwriting_small = font_small
+
 # 3. 載入並設定列車長（走路動畫）
 CONDUCTOR_WALK_CROP = (713, 74, 1261, 1054) # main_character_walk2.gif 裡角色的裁切範圍 (left, top, right, bottom)，貼齊腳底，避免角色浮空
 conductor_walk_frames = []    # 走路動畫的每一張畫格 (pygame Surface)
@@ -159,6 +169,26 @@ except pygame.error as e:
     print("將改用文字標題作為替代。")
     title_img = None # 如果圖片載入失敗，設定為 None
 
+# 載入操作手冊／生存指南畫面的背景圖片（攤開的筆記本），先裁掉圖片邊緣多餘的透明留白，
+# 再拉伸蓋滿畫面（左側留一小條空間放書籤標籤，不維持原始長寬比例）
+MANUAL_TAB_COLUMN_WIDTH = 150 # 左側留給書籤標籤的寬度
+try:
+    from PIL import Image as PILImage
+
+    manual_bg_pil = PILImage.open('生存指南_內頁.png').convert('RGBA')
+    manual_bg_bbox = manual_bg_pil.split()[3].getbbox() # 只用透明度找出書本實際內容範圍
+    if manual_bg_bbox:
+        manual_bg_pil = manual_bg_pil.crop(manual_bg_bbox)
+    manual_bg_img_original = pygame.image.frombuffer(manual_bg_pil.tobytes(), manual_bg_pil.size, 'RGBA').convert_alpha()
+    MANUAL_BG_HEIGHT = HEIGHT - 4
+    MANUAL_BG_WIDTH = WIDTH - MANUAL_TAB_COLUMN_WIDTH
+    manual_bg_img = pygame.transform.smoothscale(manual_bg_img_original, (MANUAL_BG_WIDTH, MANUAL_BG_HEIGHT))
+except Exception as e:
+    print(f"無法載入圖片 '生存指南_內頁.png': {e}")
+    print("請確認 '生存指南_內頁.png' 檔案與 main.py 在同一個資料夾中。")
+    print("操作手冊／生存指南畫面將改用原本繪製的白色面板作為替代。")
+    manual_bg_img = None # 如果圖片載入失敗，設定為 None
+
 # 載入白天車廂背景圖片（維持原始長寬比例縮放，不拉伸變形；
 # 車廂用兩張完整的圖片並排組成，車廂寬度改成剛好是圖片寬度的兩倍）
 TRAIN_DAY_TILE_COUNT = 2
@@ -215,6 +245,16 @@ except pygame.error as e:
     print("請確認 'drive_room_day.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用原本繪製的駕駛艙背景作為替代。")
     drive_room_day_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入駕駛室晚上背景圖片，做法跟白天一樣：直接拉伸蓋滿整個畫面
+try:
+    drive_room_night_img_original = pygame.image.load('drive_room_night.png').convert_alpha()
+    drive_room_night_img = pygame.transform.smoothscale(drive_room_night_img_original, (WIDTH, HEIGHT))
+except pygame.error as e:
+    print(f"無法載入圖片 'drive_room_night.png': {e}")
+    print("請確認 'drive_room_night.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用原本繪製的駕駛艙背景作為替代。")
+    drive_room_night_img = None # 如果圖片載入失敗，設定為 None
 
 # 載入白天座椅圖片，並裁掉圖片邊緣多餘的透明留白，避免椅腳貼地時浮空
 try:
@@ -318,7 +358,6 @@ current_scene = 'COCKPIT' # 遊戲從駕駛艙開始
 
 # --- 遊戲狀態管理 ---
 game_state = 'START' # 初始狀態為遊戲開始畫面
-close_button_rect = pygame.Rect(WIDTH - 50, 50, 30, 30) # 手冊的關閉按鈕
 
 # --- 開始畫面 ---
 start_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 60, 200, 55) # 開始遊戲按鈕
@@ -596,12 +635,24 @@ active_npc = None # 記錄目前正在對話的 NPC，用於對話結束後觸�
 has_girl_painting = False # 是否已從小女孩手中取得畫
 has_guide = False # 是否已取得《夜間行駛生存指南》，取得後可在手冊畫面切換查看
 
-# --- 手冊畫面（含左側頁籤，可切換操作手冊／生存指南）---
+# --- 手冊畫面（背景是攤開的筆記本圖片，靠右塞滿畫面；左側留一排書籤標籤可切換操作手冊／生存指南）---
 manual_view = 'MANUAL' # 目前手冊畫面顯示的頁籤：MANUAL 操作手冊 / GUIDE 生存指南
-manual_panel_rect = pygame.Rect(WIDTH // 2 - 350, HEIGHT // 2 - 160, 700, 320)
-manual_sidebar_width = 160
-manual_tab_manual_rect = pygame.Rect(manual_panel_rect.x + 15, manual_panel_rect.y + 70, manual_sidebar_width - 30, 50)
-manual_tab_guide_rect = pygame.Rect(manual_panel_rect.x + 15, manual_panel_rect.y + 130, manual_sidebar_width - 30, 50)
+if manual_bg_img:
+    manual_panel_rect = manual_bg_img.get_rect()
+    manual_panel_rect.topleft = (MANUAL_TAB_COLUMN_WIDTH, (HEIGHT - manual_bg_img.get_height()) // 2)
+else:
+    manual_panel_rect = pygame.Rect(MANUAL_TAB_COLUMN_WIDTH, HEIGHT // 2 - 195, 700 - MANUAL_TAB_COLUMN_WIDTH, 390)
+
+# 貼在書本左側、垂直置中的書籤標籤（縱向排列）。刻意疊進書本邊緣幾個像素，
+# 蓋掉書本圖片縮放後邊緣那條很淡的模糊像素，不然兩者中間會看起來有一條縫。
+MANUAL_TAB_WIDTH = 140
+MANUAL_TAB_HEIGHT = 48
+MANUAL_TAB_GAP = 10
+MANUAL_TAB_OVERLAP = 8
+_manual_tabs_total_height = MANUAL_TAB_HEIGHT * 2 + MANUAL_TAB_GAP
+_manual_tabs_top = manual_panel_rect.centery - _manual_tabs_total_height // 2
+manual_tab_manual_rect = pygame.Rect(manual_panel_rect.x - MANUAL_TAB_WIDTH + MANUAL_TAB_OVERLAP, _manual_tabs_top, MANUAL_TAB_WIDTH, MANUAL_TAB_HEIGHT)
+manual_tab_guide_rect = pygame.Rect(manual_panel_rect.x - MANUAL_TAB_WIDTH + MANUAL_TAB_OVERLAP, manual_tab_manual_rect.bottom + MANUAL_TAB_GAP, MANUAL_TAB_WIDTH, MANUAL_TAB_HEIGHT)
 
 # 《夜間行駛生存指南》第一頁的前三條規則，格式為 (規則標題, 規則內容, 補充說明)
 guide_rules = [
@@ -750,78 +801,91 @@ def draw_pause_menu():
                                  back_to_menu_button_rect.centery - back_text_surf.get_height() // 2))
 
 
+# 書籤標籤左側（外露那一側）的鋸齒狀撕紙邊緣，固定的一組偏移量，每次畫面都一樣、不會閃爍
+TORN_EDGE_JITTER = [0, -3, 4, -2, 3, -4, 2, 0]
+
+
+def draw_bookmark_tab(rect, active, text):
+    """畫一個貼在書本左側的書籤標籤：外側（左邊）是粗糙的撕紙邊緣，內側（右邊）疊進書本裡"""
+    steps = len(TORN_EDGE_JITTER) - 1
+    left_points = []
+    for i, jitter in enumerate(TORN_EDGE_JITTER):
+        y = rect.top + rect.height * i / steps
+        left_points.append((rect.left + jitter, y))
+    points = left_points + [(rect.right, rect.bottom), (rect.right, rect.top)]
+
+    fill_color = (235, 225, 195) if active else (150, 130, 100) # 選中時是米白色書頁色，沒選中時是暗卡其色標籤
+    text_color = BLACK if active else (245, 240, 225)
+    pygame.draw.polygon(screen, fill_color, points)
+    pygame.draw.polygon(screen, BLACK, points, 2)
+    text_surf = font_handwriting_small.render(text, True, text_color)
+    text_x = rect.centerx - text_surf.get_width() // 2
+    text_y = rect.centery - text_surf.get_height() // 2
+    screen.blit(text_surf, (text_x, text_y))
+
+
 def draw_manual_screen():
-    """繪製手冊畫面，左側頁籤可切換操作手冊／生存指南"""
+    """繪製手冊畫面，背景是攤開的筆記本圖片，上方兩個頁籤可切換操作手冊／生存指南"""
     # 半透明背景
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 180))
     screen.blit(overlay, (0, 0))
 
     panel_rect = manual_panel_rect
-    pygame.draw.rect(screen, WHITE, panel_rect)
-    pygame.draw.rect(screen, BLACK, panel_rect, 3)
+    if manual_bg_img:
+        screen.blit(manual_bg_img, panel_rect)
+    else:
+        pygame.draw.rect(screen, WHITE, panel_rect)
+        pygame.draw.rect(screen, BLACK, panel_rect, 3)
 
-    # 左側頁籤側欄
-    sidebar_rect = pygame.Rect(panel_rect.x, panel_rect.y, manual_sidebar_width, panel_rect.height)
-    pygame.draw.rect(screen, GRAY, sidebar_rect)
-    pygame.draw.line(screen, BLACK, (sidebar_rect.right, panel_rect.y), (sidebar_rect.right, panel_rect.bottom), 3)
+    # 「操作手冊」頁籤（書籤造型）
+    draw_bookmark_tab(manual_tab_manual_rect, manual_view == 'MANUAL', "操作手冊")
 
-    # 「操作手冊」頁籤
-    pygame.draw.rect(screen, WHITE if manual_view == 'MANUAL' else GRAY, manual_tab_manual_rect)
-    pygame.draw.rect(screen, BLACK, manual_tab_manual_rect, 2)
-    tab_manual_surf = font_small.render("操作手冊", True, BLACK)
-    screen.blit(tab_manual_surf, (manual_tab_manual_rect.centerx - tab_manual_surf.get_width() // 2,
-                                  manual_tab_manual_rect.centery - tab_manual_surf.get_height() // 2))
-
-    # 「生存指南」頁籤（取得指南後才會出現）
+    # 「生存指南」頁籤（取得指南後才會出現，書籤造型）
     if has_guide:
-        tab_guide_bg = WHITE if manual_view == 'GUIDE' else GRAY
-        pygame.draw.rect(screen, tab_guide_bg, manual_tab_guide_rect)
-        pygame.draw.rect(screen, BLACK, manual_tab_guide_rect, 2)
-        tab_guide_surf = font_small.render("生存指南", True, BLACK)
-        screen.blit(tab_guide_surf, (manual_tab_guide_rect.centerx - tab_guide_surf.get_width() // 2,
-                                     manual_tab_guide_rect.centery - tab_guide_surf.get_height() // 2))
+        draw_bookmark_tab(manual_tab_guide_rect, manual_view == 'GUIDE', "生存指南")
 
-    # 右側內容區
-    content_x = panel_rect.x + manual_sidebar_width + 25
+    # 內容區：只用左半頁的寬度，文字太長就換行，不要跨過中間裝訂線延伸到右頁
+    content_x = panel_rect.x + round(panel_rect.width * 0.10)
+    content_width = round(panel_rect.width * 0.36)
+    line_height = 20
 
     if manual_view == 'GUIDE' and has_guide:
-        title_surf = font.render("《夜間行駛生存指南》", True, BLACK)
-        screen.blit(title_surf, (content_x, panel_rect.y + 20))
+        title_surf = font_handwriting.render("《夜間行駛生存指南》", True, BLACK)
+        screen.blit(title_surf, (content_x, panel_rect.y + 24))
 
-        rule_y = panel_rect.y + 65
+        rule_y = panel_rect.y + 68
         for label, rule_text, desc_text in guide_rules:
-            label_surf = font_small.render(label, True, RED)
+            label_surf = font_handwriting_small.render(label, True, RED)
             screen.blit(label_surf, (content_x, rule_y))
+            rule_y += line_height
 
-            rule_surf = font_small.render(rule_text, True, BLACK)
-            screen.blit(rule_surf, (content_x, rule_y + 22))
+            for line in wrap_text(rule_text, font_handwriting_small, content_width):
+                line_surf = font_handwriting_small.render(line, True, BLACK)
+                screen.blit(line_surf, (content_x, rule_y))
+                rule_y += line_height
 
-            desc_surf = font_small.render(desc_text, True, DARK_GRAY)
-            screen.blit(desc_surf, (content_x, rule_y + 44))
+            for line in wrap_text(desc_text, font_handwriting_small, content_width):
+                line_surf = font_handwriting_small.render(line, True, RED)
+                screen.blit(line_surf, (content_x, rule_y))
+                rule_y += line_height
 
-            rule_y += 22 * 3 + 8
+            rule_y += 8 # 規則之間的間距
     else:
-        title_surf = font.render("操作手冊", True, BLACK)
-        screen.blit(title_surf, (content_x, panel_rect.y + 20))
+        title_surf = font_handwriting.render("操作手冊", True, BLACK)
+        screen.blit(title_surf, (content_x, panel_rect.y + 24))
 
         instructions = [
-            "← → / A D : 左右移動",
+            "左右方向鍵 / A D : 左右移動",
             "F : 與場景互動",
             "B : 開啟背包",
             "L : 開關手電筒（需持有手電筒）",
             "TAB : 關閉此手冊",
-            "ESC : 回到主頁"
+            "ESC : 開啟選單"
         ]
         for i, text in enumerate(instructions):
-            text_surf = font_small.render(text, True, BLACK)
+            text_surf = font_handwriting_small.render(text, True, BLACK)
             screen.blit(text_surf, (content_x, panel_rect.y + 90 + i * 40))
-
-    # 關閉按鈕
-    pygame.draw.rect(screen, RED, close_button_rect)
-    close_text_surf = font.render("X", True, WHITE)
-    screen.blit(close_text_surf, (close_button_rect.centerx - close_text_surf.get_width() // 2,
-                                  close_button_rect.centery - close_text_surf.get_height() // 2))
 
 
 def draw_manual_hint():
@@ -903,8 +967,12 @@ def draw_cockpit_scene(camera_offset_x):
         # 白天使用駕駛室背景圖片，蓋掉 draw_background 畫的素色牆壁與地板
         screen.blit(drive_room_day_img, (-camera_offset_x, 0))
         return
+    if not is_daytime() and drive_room_night_img:
+        # 晚上使用駕駛室背景圖片，蓋掉 draw_background 畫的素色牆壁與地板
+        screen.blit(drive_room_night_img, (-camera_offset_x, 0))
+        return
 
-    # 圖片載入失敗，或晚上還沒有對應背景圖片時，改用原本手繪的樣式
+    # 圖片載入失敗時，改用原本手繪的樣式
     # 畫一個大的駕駛窗
     cockpit_window_rect = pygame.Rect(20 - camera_offset_x, 80, 300, 150)
     pygame.draw.rect(screen, WHITE, cockpit_window_rect) # 窗戶玻璃
@@ -1374,9 +1442,7 @@ while running:
                     game_state = 'PLAYING'
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_pos = to_logical_pos(event.pos)
-                if close_button_rect.collidepoint(mouse_pos):
-                    game_state = 'PLAYING'
-                elif manual_tab_manual_rect.collidepoint(mouse_pos):
+                if manual_tab_manual_rect.collidepoint(mouse_pos):
                     manual_view = 'MANUAL'
                 elif has_guide and manual_tab_guide_rect.collidepoint(mouse_pos):
                     manual_view = 'GUIDE'
