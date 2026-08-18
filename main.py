@@ -541,6 +541,9 @@ for _icon_item_name, _icon_filename, _icon_max_size in [
     ('維修員留下的螺絲起子', 'screwdriver.png', 110),
     ('工具間鑰匙', 'toolroom_key.png', 110),
     ('舊車票', 'old_ticket.png', 24),
+    ('舊路線圖', 'old_route_map.png', 24),
+    ('舊報紙', 'old_news.png', 24),
+    ('車站員工日誌', '員工日誌.png', 24),
     ('《夜間行駛生存指南》', '生存指南.png', 110),
 ]:
     try:
