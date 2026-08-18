@@ -18,6 +18,8 @@ FPS = 60
 PLAYER_SPEED = 5
 DOOR_HEIGHT = 200
 DOOR_WIDTH = 80
+CONDUCTOR_SIZE = 240 # 主角的寬高（原本 160 的 1.5 倍）
+CONDUCTOR_Y_OFFSET = 20 # 主角往下移動的距離
 
 # 定義顏色 (RGB 格式)
 WHITE = (255, 255, 255)
@@ -53,7 +55,7 @@ try:
     gif = Image.open('main_character_walk2.gif')
     crop_w = CONDUCTOR_WALK_CROP[2] - CONDUCTOR_WALK_CROP[0]
     crop_h = CONDUCTOR_WALK_CROP[3] - CONDUCTOR_WALK_CROP[1]
-    scaled_h = 160
+    scaled_h = CONDUCTOR_SIZE
     scaled_w = max(1, round(scaled_h * crop_w / crop_h)) # 維持長寬比例，避免角色被拉扁
     for i in range(gif.n_frames):
         gif.seek(i)
@@ -76,9 +78,9 @@ try:
         arr[background, 3] = 0
         frame_surf = pygame.image.frombuffer(arr.tobytes(), (arr.shape[1], arr.shape[0]), 'RGBA').convert_alpha()
         frame_surf = pygame.transform.smoothscale(frame_surf, (scaled_w, scaled_h))
-        # 貼到 160x160 的透明畫布中央，維持與其他場景元素一致的角色尺寸
-        canvas = pygame.Surface((160, 160), pygame.SRCALPHA)
-        canvas.blit(frame_surf, ((160 - scaled_w) // 2, 0))
+        # 貼到透明畫布中央，維持角色尺寸一致
+        canvas = pygame.Surface((CONDUCTOR_SIZE, CONDUCTOR_SIZE), pygame.SRCALPHA)
+        canvas.blit(frame_surf, ((CONDUCTOR_SIZE - scaled_w) // 2, 0))
         conductor_walk_frames.append(canvas)
         conductor_walk_durations.append(gif.info.get('duration', 80))
     conductor_img = conductor_walk_frames[0]
@@ -90,7 +92,7 @@ except Exception as e:
     conductor_walk_durations = []
     try:
         conductor_img_original = pygame.image.load('main_character.png').convert_alpha()
-        conductor_img = pygame.transform.scale(conductor_img_original, (160, 160))
+        conductor_img = pygame.transform.scale(conductor_img_original, (CONDUCTOR_SIZE, CONDUCTOR_SIZE))
     except pygame.error as e2:
         print(f"無法載入圖片 'main_character.png': {e2}")
         print("將使用藍色方塊作為替代。")
@@ -118,12 +120,68 @@ except pygame.error as e:
     print("將改用文字標題作為替代。")
     title_img = None # 如果圖片載入失敗，設定為 None
 
+# 載入白天車廂背景圖片（維持原始長寬比例縮放，不拉伸變形；
+# 車廂用兩張完整的圖片並排組成，車廂寬度改成剛好是圖片寬度的兩倍）
+TRAIN_DAY_TILE_COUNT = 2
+try:
+    train_day_img_original = pygame.image.load('train_day.png').convert_alpha()
+    train_day_scale = HEIGHT / train_day_img_original.get_height()
+    train_day_tile_width = round(train_day_img_original.get_width() * train_day_scale)
+    train_day_img = pygame.transform.smoothscale(train_day_img_original, (train_day_tile_width, HEIGHT))
+    CARRIAGE_WIDTH = train_day_tile_width * TRAIN_DAY_TILE_COUNT # 車廂寬度改成圖片寬度的兩倍
+except pygame.error as e:
+    print(f"無法載入圖片 'train_day.png': {e}")
+    print("請確認 'train_day.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用原本繪製的車廂背景作為替代。")
+    train_day_img = None # 如果圖片載入失敗，設定為 None
+    train_day_scale = HEIGHT / 1024
+    train_day_tile_width = CARRIAGE_WIDTH // TRAIN_DAY_TILE_COUNT
+
+# 縮放後的圖片邊緣會有一條很淡的模糊像素，兩張圖直接並排時會看起來像一條縫，
+# 讓每一塊之間互相重疊幾個像素蓋掉它
+TRAIN_DAY_TILE_OVERLAP = 3
+train_day_tile_step = train_day_tile_width - TRAIN_DAY_TILE_OVERLAP
+
+# train_day.png 原圖（寬 3323px）裡四扇窗戶的實際中心位置，用來決定座椅要擺在哪裡
+TRAIN_DAY_WINDOW_CENTERS_ORIGINAL = [345, 915, 2405, 2975]
+
+# 載入白天座椅圖片，並裁掉圖片邊緣多餘的透明留白，避免椅腳貼地時浮空
+try:
+    from PIL import Image as PILImage
+
+    chair_pil = PILImage.open('chair_day.png').convert('RGBA')
+    chair_alpha_bbox = chair_pil.split()[3].getbbox() # 只用透明度找出實際內容範圍
+    if chair_alpha_bbox:
+        chair_pil = chair_pil.crop(chair_alpha_bbox)
+    chair_day_img_original = pygame.image.frombuffer(chair_pil.tobytes(), chair_pil.size, 'RGBA').convert_alpha()
+    CHAIR_DAY_HEIGHT = 150
+    chair_day_width = round(CHAIR_DAY_HEIGHT * chair_day_img_original.get_width() / chair_day_img_original.get_height())
+    chair_day_img = pygame.transform.smoothscale(chair_day_img_original, (chair_day_width, CHAIR_DAY_HEIGHT))
+except Exception as e:
+    print(f"無法載入圖片 'chair_day.png': {e}")
+    print("請確認 'chair_day.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用原本繪製的座椅作為替代。")
+    chair_day_img = None # 如果圖片載入失敗，設定為 None
+
+# 依照背景圖片裡窗戶的實際位置，計算白天座椅要擺放的世界座標（每張背景圖裡的每扇窗戶前都放一張椅子）
+chair_day_positions = []
+if train_day_img:
+    window_centers_scaled = [round(x * train_day_scale) for x in TRAIN_DAY_WINDOW_CENTERS_ORIGINAL]
+    chair_half_width = (chair_day_img.get_width() // 2) if chair_day_img else 60
+    safe_min = DOOR_WIDTH + chair_half_width
+    safe_max = CARRIAGE_WIDTH - DOOR_WIDTH - chair_half_width
+    for tile_index in range(TRAIN_DAY_TILE_COUNT):
+        for center in window_centers_scaled:
+            pos = tile_index * train_day_tile_step + center
+            if safe_min <= pos <= safe_max:
+                chair_day_positions.append(pos)
+
 # 設定列車長的碰撞框 (Rect)
 conductor_rect = pygame.Rect(
-    COCKPIT_WIDTH - DOOR_WIDTH - 160 - 10, # 初始 x 位置：駕駛艙門的左邊再過去一點
-    HEIGHT - FLOOR_HEIGHT - 160, 
-    160, 
-    160
+    COCKPIT_WIDTH - DOOR_WIDTH - CONDUCTOR_SIZE - 10, # 初始 x 位置：駕駛艙門的左邊再過去一點
+    HEIGHT - FLOOR_HEIGHT - CONDUCTOR_SIZE + CONDUCTOR_Y_OFFSET,
+    CONDUCTOR_SIZE,
+    CONDUCTOR_SIZE
 )
 # 控制遊戲更新頻率的時鐘
 clock = pygame.time.Clock()
@@ -408,7 +466,7 @@ item_spots = [
     },
     {
         'scene': 'CARRIAGE_1',
-        'rect': pygame.Rect(980, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 60, DOOR_HEIGHT), # 車廂座位上
+        'rect': pygame.Rect(650, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 60, DOOR_HEIGHT), # 車廂座位上
         'items': ['舊報紙'],
         'collected': False,
         'min_day_index': 2, # 第二天白天起才會出現
@@ -617,15 +675,31 @@ def draw_background(camera_offset_x):
 
 def draw_carriage_scene(camera_offset_x, scene_name):
     """繪製指定車廂內的物件 (座椅、窗戶、門)"""
-    # 畫座椅
-    chair_positions = [140 + i * 140 for i in range(8)]
-    for pos in chair_positions:
-        draw_side_chair(pos, camera_offset_x)
-    # 畫窗戶
-    for i in range(3):
-        win_rect = pygame.Rect(100 + i * 450 - camera_offset_x, 100, 150, 100)
-        pygame.draw.rect(screen, WHITE, win_rect)
-        pygame.draw.rect(screen, BLACK, win_rect, 3)
+    is_day = not DAY_NIGHT_STAGES[day_night_index].endswith('NIGHT')
+
+    # 白天使用車廂背景圖片，蓋掉 draw_background 畫的素色牆壁與地板
+    # 用兩張完整的圖片並排組成車廂背景（互相重疊幾個像素，蓋掉拼接縫）
+    if is_day and train_day_img:
+        for tile_index in range(TRAIN_DAY_TILE_COUNT):
+            screen.blit(train_day_img, (tile_index * train_day_tile_step - camera_offset_x, 0))
+
+    # 畫座椅：白天依照背景圖片裡窗戶的位置擺放，晚上維持原本繪製的樣式（依車廂實際寬度平均分佈）
+    if is_day and chair_day_img and chair_day_positions:
+        for pos in chair_day_positions:
+            chair_rect = chair_day_img.get_rect()
+            chair_rect.midbottom = (pos - camera_offset_x, HEIGHT - FLOOR_HEIGHT + 20)
+            screen.blit(chair_day_img, chair_rect)
+    else:
+        chair_positions = range(140, CARRIAGE_WIDTH - DOOR_WIDTH - 75, 140)
+        for pos in chair_positions:
+            draw_side_chair(pos, camera_offset_x)
+
+    # 畫窗戶（白天車廂背景圖片裡已經畫好窗戶了，不用再另外畫；晚上依車廂實際寬度平均分佈）
+    if not (is_day and train_day_img):
+        for x in range(100, CARRIAGE_WIDTH - DOOR_WIDTH - 150, 450):
+            win_rect = pygame.Rect(x - camera_offset_x, 100, 150, 100)
+            pygame.draw.rect(screen, WHITE, win_rect)
+            pygame.draw.rect(screen, BLACK, win_rect, 3)
     # 根據是哪個車廂，畫對應的門
     if scene_name == 'CARRIAGE_1': # 車廂1有兩個門
         # 畫右邊通往連接處的門
@@ -1027,8 +1101,8 @@ def reset_game():
     global has_guide, has_girl_painting, has_talked_to_old_lady, active_npc, manual_view
     global dialogue_lines, dialogue_index, game_over_reason
 
-    conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - 160 - 10
-    conductor_rect.y = HEIGHT - FLOOR_HEIGHT - 160
+    conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - CONDUCTOR_SIZE - 10
+    conductor_rect.y = HEIGHT - FLOOR_HEIGHT - CONDUCTOR_SIZE + CONDUCTOR_Y_OFFSET
     current_scene = 'COCKPIT'
     game_state = 'START'
     camera_x = 0
