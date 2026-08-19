@@ -170,16 +170,73 @@ except Exception as e:
         print("將使用藍色方塊作為替代。")
         conductor_img = None
 
-# 載入主頁背景音樂（26秒一個循環，進到主頁就重複播放，離開主頁就停止）
+# 背景音樂：主頁一首、白天（第一、二天共用）一首、第一天晚上熄燈前／熄燈後各一首、第二天晚上一首，
+# 依目前狀態自動切換播放。改用 pygame.mixer.Sound 搭配兩個聲道輪流播放（不用 pygame.mixer.music，
+# 因為它同時只能播一軌，換歌時舊的會被直接切斷）：新歌在另一個聲道淡入的同時，
+# 舊歌所在的聲道同時淡出，兩首歌會真正重疊交叉。
 music_volume = 0.5 # 音量（0.0~1.0），開始畫面跟遊戲裡的暫停選單都能調整
-try:
-    pygame.mixer.music.load(os.path.join('sound', '859529__notmeat2020__stems-4-santuario-f-minor.wav'))
-    pygame.mixer.music.set_volume(music_volume)
-    start_menu_music_loaded = True
-except (pygame.error, FileNotFoundError) as e:
-    print(f"無法載入主頁背景音樂: {e}")
-    print("請確認 sound 資料夾裡有該音樂檔案。")
-    start_menu_music_loaded = False
+MUSIC_FADE_MS = 800 # 音樂切換時淡入淡出的時間（毫秒）
+MUSIC_FILES = {
+    'title': os.path.join('sound', 'title.wav'),
+    'day': os.path.join('sound', 'day.wav'),
+    'day1_night_calm': os.path.join('sound', 'day1_night_calm.wav'),
+    'day1_night': os.path.join('sound', 'day1_night.wav'),
+    'day2_night': os.path.join('sound', 'day2_night.wav'),
+}
+MUSIC_SOUNDS = {} # 鍵是音樂名稱，值是預先載入好的 pygame.mixer.Sound
+for _music_key, _music_path in MUSIC_FILES.items():
+    try:
+        MUSIC_SOUNDS[_music_key] = pygame.mixer.Sound(_music_path)
+    except (pygame.error, FileNotFoundError) as e:
+        print(f"無法載入音樂 '{_music_path}': {e}")
+
+pygame.mixer.set_reserved(2) # 保留聲道0、1專門給背景音樂用，不會被其他音效搶用
+music_channel_a = pygame.mixer.Channel(0) # 兩個聲道輪流當「目前播放中」跟「即將淡入」的那一軌
+music_channel_b = pygame.mixer.Channel(1)
+music_active_channel = None # 目前正在播放（前景）的聲道，None 表示沒有音樂在播
+current_music_key = None # 目前正在播放的音樂鍵值，None 表示沒有音樂在播
+
+
+def get_desired_music_key():
+    """依目前遊戲狀態決定應該播放哪首背景音樂，回傳 None 表示這時候不播放音樂"""
+    if game_state == 'START':
+        return 'title'
+    current_stage = DAY_NIGHT_STAGES[day_night_index]
+    if current_stage in ('DAY1_DAY', 'DAY2_DAY'):
+        return 'day'
+    if current_stage == 'DAY1_NIGHT':
+        return 'day1_night' if lights_out else 'day1_night_calm'
+    if current_stage == 'DAY2_NIGHT':
+        return 'day2_night'
+    return None
+
+
+def update_background_music():
+    """如果目前該播放的音樂跟正在播的不一樣，就切換：新歌在另一個聲道淡入的同時，
+    舊歌所在的聲道同時淡出，兩首歌會真正重疊交叉，不是生硬地直接切歌"""
+    global current_music_key, music_active_channel
+    desired = get_desired_music_key()
+    if desired == current_music_key:
+        return
+    current_music_key = desired
+
+    old_channel = music_active_channel
+    if desired is None:
+        if old_channel:
+            old_channel.fadeout(MUSIC_FADE_MS)
+        music_active_channel = None
+        return
+
+    sound = MUSIC_SOUNDS.get(desired)
+    if not sound:
+        return
+    # 兩個聲道輪流當「新歌淡入」的那一個，確保不會跟正在淡出的舊歌用同一個聲道互相打斷
+    new_channel = music_channel_b if old_channel is music_channel_a else music_channel_a
+    new_channel.set_volume(music_volume)
+    new_channel.play(sound, loops=-1, fade_ms=MUSIC_FADE_MS)
+    if old_channel:
+        old_channel.fadeout(MUSIC_FADE_MS)
+    music_active_channel = new_channel
 
 # 載入開始畫面的背景圖片
 try:
@@ -752,7 +809,7 @@ def is_daytime():
 day1_night_triggered = False # 是否已經播放過第一天晚上的事件，避免重複觸發
 day1_night_resolved = False # 第一天晚上的劇情是否已經解完，解完之前無法前進到第二天
 night1_pending_intro = False # 是否已經切到第一天晚上、但要等玩家關掉手冊（生存指南頁）後才播放開場劇情
-night1_patrol_active = False # 是否正在「巡視車廂」任務中（intro 劇情結束後開始，走到第五節車廂後結束）
+night1_patrol_active = False # 是否正在「巡視車廂」任務中（intro 劇情結束後開始，走到第四節車廂後結束）
 lights_out = False # 列車燈光是否熄滅中，此時任務指引是先打開手電筒、再返回駕駛室，且開門需要手電筒；
                     # 熄燈期間除了車廂門以外，無法跟任何東西互動（也不會顯示互動提示）
 
@@ -769,7 +826,7 @@ night1_intro_lines = [
     ("旁白", "我起身，準備開始夜班的第一次巡視。"),
 ]
 
-night1_blackout_lines = [ # 走到第五節車廂、且持有手電筒時播放，播完後任務改成「打開手電筒」
+night1_blackout_lines = [ # 走到第四節車廂、且持有手電筒時播放，播完後任務改成「打開手電筒」
     ("旁白", "凌晨 00:17，列車燈光突然熄滅。"),
 ]
 
@@ -777,7 +834,7 @@ night1_knock_lines = [
     ("旁白", "叩。叩。叩。有人在敲駕駛室門。"),
 ]
 
-night1_lines_no_flashlight = [ # 走到第五節車廂時沒有手電筒，直接迎來黑暗中的結局
+night1_lines_no_flashlight = [ # 走到第四節車廂時沒有手電筒，直接迎來黑暗中的結局
     ("旁白", "凌晨 00:17，列車燈光突然熄滅。"),
     ("旁白", "四周一片漆黑，你完全看不清任何東西。"),
     ("旁白", "你伸手在黑暗中摸索，想找到回駕駛室的路——"),
@@ -873,8 +930,7 @@ SCENE_ORDER = [
     'CARRIAGE_1', 'CONNECTION_1',
     'CARRIAGE_2', 'CONNECTION_2',
     'CARRIAGE_3', 'CONNECTION_3',
-    'CARRIAGE_4', 'CONNECTION_4',
-    'CARRIAGE_5',
+    'CARRIAGE_4',
 ]
 
 
@@ -1263,7 +1319,9 @@ def set_volume_from_x(track_rect, x):
     global music_volume
     ratio = (x - track_rect.x) / track_rect.width
     music_volume = max(0.0, min(1.0, ratio))
-    pygame.mixer.music.set_volume(music_volume)
+    # 交叉淡入淡出期間兩個聲道可能都在播放，兩個都要調整音量
+    music_channel_a.set_volume(music_volume)
+    music_channel_b.set_volume(music_volume)
 
 
 def handle_volume_slider_mousedown(track_rect, mouse_pos):
@@ -1979,7 +2037,7 @@ def draw_lights_out_overlay(camera_offset_x):
 
 def draw_lights_out_hint():
     """第一天晚上事件期間，依目前階段顯示對應的任務指引：
-    巡視車廂 → （走到第五節車廂熄燈後）打開手電筒 → 返回駕駛室"""
+    巡視車廂 → （走到第四節車廂熄燈後）打開手電筒 → 返回駕駛室"""
     if night1_patrol_active:
         task_text = "任務：巡視車廂"
     elif lights_out and not flashlight_on:
@@ -2074,6 +2132,32 @@ def draw_night1_choice():
     close_surf = font_small.render("不開門", True, WHITE)
     screen.blit(close_surf, (night1_choice_close_rect.centerx - close_surf.get_width() // 2,
                              night1_choice_close_rect.centery - close_surf.get_height() // 2))
+
+
+# --- 第二天晚上平安度過後顯示的「未完待續」畫面：黑底文字淡入→停留→淡出，結束後自動重置回主頁 ---
+TO_BE_CONTINUED_FADE_IN = 700
+TO_BE_CONTINUED_HOLD = 2200
+TO_BE_CONTINUED_FADE_OUT = 900
+TO_BE_CONTINUED_TOTAL = TO_BE_CONTINUED_FADE_IN + TO_BE_CONTINUED_HOLD + TO_BE_CONTINUED_FADE_OUT
+to_be_continued_start_time = 0
+
+
+def draw_to_be_continued():
+    """畫「未完待續...」畫面，黑底文字淡入、停留一陣子後淡出"""
+    screen.fill(BLACK)
+    elapsed = pygame.time.get_ticks() - to_be_continued_start_time
+
+    if elapsed < TO_BE_CONTINUED_FADE_IN:
+        alpha = round(255 * elapsed / TO_BE_CONTINUED_FADE_IN)
+    elif elapsed < TO_BE_CONTINUED_FADE_IN + TO_BE_CONTINUED_HOLD:
+        alpha = 255
+    else:
+        fade_elapsed = elapsed - TO_BE_CONTINUED_FADE_IN - TO_BE_CONTINUED_HOLD
+        alpha = max(0, 255 - round(255 * fade_elapsed / TO_BE_CONTINUED_FADE_OUT))
+
+    text_surf = font_title.render("未完待續...", True, WHITE)
+    text_surf.set_alpha(alpha)
+    screen.blit(text_surf, text_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
 
 
 def draw_game_over_screen():
@@ -2207,14 +2291,8 @@ def draw_interact_hint(camera_offset_x):
 # 4. 遊戲主迴圈
 dt = 0 # 每一幀經過的毫秒數，供走路動畫計時使用
 running = True
-previous_game_state = None # 用來偵測是否剛進入／離開主頁，藉此開關背景音樂
 while running:
-    if start_menu_music_loaded:
-        if game_state == 'START' and previous_game_state != 'START':
-            pygame.mixer.music.play(-1) # 迴圈播放，音樂檔本身就是26秒的循環
-        elif game_state != 'START' and previous_game_state == 'START':
-            pygame.mixer.music.stop()
-    previous_game_state = game_state
+    update_background_music()
 
     if game_state == 'START':
         # --- 開始畫面的事件與繪圖 ---
@@ -2425,8 +2503,8 @@ while running:
             if camera_x > current_world_width - WIDTH:
                 camera_x = current_world_width - WIDTH
 
-        if night1_patrol_active and current_scene == 'CARRIAGE_5':
-            # 巡視車廂任務走到第五節車廂：燈光突然熄滅，任務改成先打開手電筒、再返回駕駛室
+        if night1_patrol_active and current_scene == 'CARRIAGE_4':
+            # 巡視車廂任務走到第四節車廂：燈光突然熄滅，任務改成先打開手電筒、再返回駕駛室
             night1_patrol_active = False
             lights_out = True
             if '老式手電筒' not in inventory:
@@ -2530,7 +2608,7 @@ while running:
                         elif active_npc == 'NIGHT1_INTRO':
                             active_npc = None
                             show_day_title_card('DAY1_NIGHT')
-                            # 任務指引改成巡視車廂，走到第五節車廂前燈光都還是正常的
+                            # 任務指引改成巡視車廂，走到第四節車廂前燈光都還是正常的
                             night1_patrol_active = True
                             game_state = 'PLAYING'
                         elif active_npc == 'NIGHT1_BLACKOUT':
@@ -2569,7 +2647,8 @@ while running:
                             )
                         elif active_npc == 'NIGHT2_SAFE':
                             active_npc = None
-                            game_state = 'PLAYING'
+                            to_be_continued_start_time = pygame.time.get_ticks()
+                            game_state = 'TO_BE_CONTINUED'
                         elif active_npc == 'NIGHT2_CAUGHT':
                             active_npc = None
                             game_over_reason = "你打開了車門，月台上的人朝你走了過來。"
@@ -2650,6 +2729,17 @@ while running:
                     reset_game()
 
         draw_game_over_screen()
+
+    elif game_state == 'TO_BE_CONTINUED':
+        # --- 「未完待續」畫面的事件與繪圖，時間到了自動重置回主頁 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+        draw_to_be_continued()
+
+        if pygame.time.get_ticks() - to_be_continued_start_time >= TO_BE_CONTINUED_TOTAL:
+            reset_game()
 
     elif game_state == 'INVENTORY':
         # --- 背包狀態的事件與繪圖 ---
