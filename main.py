@@ -10,6 +10,13 @@ def asset_path(filename):
     """圖片、圖檔等素材都放在 pictures 資料夾裡，統一組出正確路徑"""
     return os.path.join('pictures', filename)
 
+
+def load_height_locked_image(filename):
+    """載入圖片，等比例縮放到剛好蓋滿畫面高度，不會造成上下/左右拉伸變形；寬度依照圖片原始長寬比例算出來"""
+    original = pygame.image.load(asset_path(filename)).convert_alpha()
+    width = round(HEIGHT * original.get_width() / original.get_height())
+    return pygame.transform.smoothscale(original, (width, HEIGHT))
+
 # 2. 設定視窗大小與標題
 WIDTH, HEIGHT = 800, 400 # 遊戲畫面的邏輯解析度（所有繪圖座標都以這個尺寸為準）
 CARRIAGE_WIDTH = 1600 # 車廂場景的寬度
@@ -380,31 +387,29 @@ train_night_tile_step = train_night_tile_width - TRAIN_NIGHT_TILE_OVERLAP
 # train_night.png 原圖（寬 3320px）裡四扇窗戶的實際中心位置，用來決定座椅要擺在哪裡
 TRAIN_NIGHT_WINDOW_CENTERS_ORIGINAL = [355, 890, 2435, 2960]
 
-# 載入駕駛室白天背景圖片，直接拉伸蓋滿整個畫面（800x400），不維持原始長寬比例
+# 載入駕駛室白天背景圖片，等比例縮放到蓋滿畫面高度，不維持原始長寬比例的拉伸不會發生；
+# 左右比畫面窄的部分用黑邊補滿，這個等比例縮放後的寬度直接當作駕駛艙場景的世界寬度。
 try:
-    drive_room_day_img_original = pygame.image.load(asset_path('drive_room_day_locked.png')).convert_alpha()
-    drive_room_day_img = pygame.transform.smoothscale(drive_room_day_img_original, (WIDTH, HEIGHT))
-    COCKPIT_WIDTH = WIDTH # 駕駛艙圖片現在直接蓋滿整個畫面寬度，不用再左右捲動
+    drive_room_day_img = load_height_locked_image('drive_room_day_locked.png')
+    COCKPIT_WIDTH = drive_room_day_img.get_width()
 except pygame.error as e:
     print(f"無法載入圖片 'drive_room_day_locked.png': {e}")
     print("請確認 'drive_room_day_locked.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用原本繪製的駕駛艙背景作為替代。")
     drive_room_day_img = None # 如果圖片載入失敗，設定為 None
 
-# 載入駕駛室白天「已取得生存指南」背景圖片，做法跟鎖著的版本一樣：直接拉伸蓋滿整個畫面
+# 載入駕駛室白天「已取得生存指南」背景圖片，做法跟鎖著的版本一樣：等比例縮放，不拉伸變形
 try:
-    drive_room_day_unlocked_img_original = pygame.image.load(asset_path('drive_room_day_unlocked.png')).convert_alpha()
-    drive_room_day_unlocked_img = pygame.transform.smoothscale(drive_room_day_unlocked_img_original, (WIDTH, HEIGHT))
+    drive_room_day_unlocked_img = load_height_locked_image('drive_room_day_unlocked.png')
 except pygame.error as e:
     print(f"無法載入圖片 'drive_room_day_unlocked.png': {e}")
     print("請確認 'drive_room_day_unlocked.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用鎖著的駕駛室背景作為替代。")
     drive_room_day_unlocked_img = drive_room_day_img # 解鎖圖片載入失敗時，退回鎖著的圖片
 
-# 載入駕駛室晚上背景圖片，做法跟白天一樣：直接拉伸蓋滿整個畫面
+# 載入駕駛室晚上背景圖片，做法跟白天一樣：等比例縮放，不拉伸變形
 try:
-    drive_room_night_img_original = pygame.image.load(asset_path('drive_room_night.png')).convert_alpha()
-    drive_room_night_img = pygame.transform.smoothscale(drive_room_night_img_original, (WIDTH, HEIGHT))
+    drive_room_night_img = load_height_locked_image('drive_room_night.png')
 except pygame.error as e:
     print(f"無法載入圖片 'drive_room_night.png': {e}")
     print("請確認 'drive_room_night.png' 檔案與 main.py 在同一個資料夾中。")
@@ -413,12 +418,11 @@ except pygame.error as e:
 
 # 載入連接處白天背景圖片：CONNECTION_1／CONNECTION_4（車廂間的一般通道）用 connect_day，
 # CONNECTION_2（廁所）用 connect_toilet_day，CONNECTION_3（工具間）用 connect_toolroom_day。
-# 左右拉伸1.25倍、上下蓋滿整個畫面高度；這個拉伸後的寬度直接當作連接處場景的世界寬度，
+# 等比例縮放到蓋滿整個畫面高度，不會有拉伸變形；每張圖片縮放後的寬度不一定相同，
+# 所以直接把這個寬度當作各自連接處場景的世界寬度（見 get_scene_width），
 # 這樣往前一節／下一節車廂的門（在世界的最左、最右邊）才會剛好對齊圖片邊緣。
-CONNECTION_WIDTH = round(CONNECTION_WIDTH * 1.25)
 try:
-    connect_day_img_original = pygame.image.load(asset_path('connect_day.png')).convert_alpha()
-    connect_day_img = pygame.transform.smoothscale(connect_day_img_original, (CONNECTION_WIDTH, HEIGHT))
+    connect_day_img = load_height_locked_image('connect_day.png')
 except pygame.error as e:
     print(f"無法載入圖片 'connect_day.png': {e}")
     print("請確認 'connect_day.png' 檔案與 main.py 在同一個資料夾中。")
@@ -426,8 +430,7 @@ except pygame.error as e:
     connect_day_img = None # 如果圖片載入失敗，設定為 None
 
 try:
-    connect_toilet_day_img_original = pygame.image.load(asset_path('connect_toilet_day.png')).convert_alpha()
-    connect_toilet_day_img = pygame.transform.smoothscale(connect_toilet_day_img_original, (CONNECTION_WIDTH, HEIGHT))
+    connect_toilet_day_img = load_height_locked_image('connect_toilet_day.png')
 except pygame.error as e:
     print(f"無法載入圖片 'connect_toilet_day.png': {e}")
     print("請確認 'connect_toilet_day.png' 檔案與 main.py 在同一個資料夾中。")
@@ -435,28 +438,34 @@ except pygame.error as e:
     connect_toilet_day_img = None # 如果圖片載入失敗，設定為 None
 
 try:
-    connect_toolroom_day_img_original = pygame.image.load(asset_path('connect_toolroom_day.png')).convert_alpha()
-    connect_toolroom_day_img = pygame.transform.smoothscale(connect_toolroom_day_img_original, (CONNECTION_WIDTH, HEIGHT))
+    connect_toolroom_day_img = load_height_locked_image('connect_toolroom_day.png')
 except pygame.error as e:
     print(f"無法載入圖片 'connect_toolroom_day.png': {e}")
     print("請確認 'connect_toolroom_day.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用原本繪製的連接處背景作為替代。")
     connect_toolroom_day_img = None # 如果圖片載入失敗，設定為 None
 
-# 載入廁所內部圖片（按 F 走進廁所門後顯示的畫面），直接拉伸蓋滿整個畫面
+# CONNECTION_1／CONNECTION_4、CONNECTION_2、CONNECTION_3 各自對應哪張連接處圖片，
+# get_scene_width() 會用這個對照表查出每個連接處場景實際的世界寬度
+CONNECTION_SCENE_IMAGES = {
+    'CONNECTION_1': connect_day_img,
+    'CONNECTION_2': connect_toilet_day_img,
+    'CONNECTION_3': connect_toolroom_day_img,
+    'CONNECTION_4': connect_day_img,
+}
+
+# 載入廁所內部圖片（按 F 走進廁所門後顯示的畫面），等比例縮放到蓋滿畫面高度，不拉伸變形
 try:
-    toilet_img_original = pygame.image.load(asset_path('toilet.png')).convert_alpha()
-    toilet_img = pygame.transform.smoothscale(toilet_img_original, (WIDTH, HEIGHT))
+    toilet_img = load_height_locked_image('toilet.png')
 except pygame.error as e:
     print(f"無法載入圖片 'toilet.png': {e}")
     print("請確認 'toilet.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用黑色背景作為替代。")
     toilet_img = None # 如果圖片載入失敗，設定為 None
 
-# 載入工具間內部、工作桌特寫圖片，做法跟廁所一樣：直接拉伸蓋滿整個畫面
+# 載入工具間內部、工作桌特寫圖片，做法跟廁所一樣：等比例縮放，不拉伸變形
 try:
-    toolroom_img_original = pygame.image.load(asset_path('toolroom.png')).convert_alpha()
-    toolroom_img = pygame.transform.smoothscale(toolroom_img_original, (WIDTH, HEIGHT))
+    toolroom_img = load_height_locked_image('toolroom.png')
 except pygame.error as e:
     print(f"無法載入圖片 'toolroom.png': {e}")
     print("請確認 'toolroom.png' 檔案與 main.py 在同一個資料夾中。")
@@ -464,8 +473,7 @@ except pygame.error as e:
     toolroom_img = None # 如果圖片載入失敗，設定為 None
 
 try:
-    tooltable_img_original = pygame.image.load(asset_path('tooltable.png')).convert_alpha()
-    tooltable_img = pygame.transform.smoothscale(tooltable_img_original, (WIDTH, HEIGHT))
+    tooltable_img = load_height_locked_image('tooltable.png')
 except pygame.error as e:
     print(f"無法載入圖片 'tooltable.png': {e}")
     print("請確認 'tooltable.png' 檔案與 main.py 在同一個資料夾中。")
@@ -501,11 +509,10 @@ except pygame.error as e:
     print("將改用黑色背景作為替代。")
     case_img = None # 如果圖片載入失敗，設定為 None
 
-# 載入操作台細節畫面的背景圖片（按 F 聚焦操作台後顯示），做法跟廁所一樣：直接拉伸蓋滿整個畫面。
+# 載入操作台細節畫面的背景圖片（按 F 聚焦操作台後顯示），做法跟 case.png 一樣：等比例縮放到蓋滿畫面高度、置中顯示，不拉伸變形。
 # 置物櫃鎖著／解鎖分別對應 operator_day_locked.png、operator_day_unlocked.png 兩張圖。
 try:
-    operator_day_locked_img_original = pygame.image.load(asset_path('operator_day_locked.png')).convert_alpha()
-    operator_day_locked_img = pygame.transform.smoothscale(operator_day_locked_img_original, (WIDTH, HEIGHT))
+    operator_day_locked_img = load_height_locked_image('operator_day_locked.png')
 except pygame.error as e:
     print(f"無法載入圖片 'operator_day_locked.png': {e}")
     print("請確認 'operator_day_locked.png' 檔案與 main.py 在同一個資料夾中。")
@@ -513,18 +520,16 @@ except pygame.error as e:
     operator_day_locked_img = None # 如果圖片載入失敗，設定為 None
 
 try:
-    operator_day_unlocked_img_original = pygame.image.load(asset_path('operator_day_unlocked.png')).convert_alpha()
-    operator_day_unlocked_img = pygame.transform.smoothscale(operator_day_unlocked_img_original, (WIDTH, HEIGHT))
+    operator_day_unlocked_img = load_height_locked_image('operator_day_unlocked.png')
 except pygame.error as e:
     print(f"無法載入圖片 'operator_day_unlocked.png': {e}")
     print("請確認 'operator_day_unlocked.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用鎖著的操作台圖片作為替代。")
     operator_day_unlocked_img = operator_day_locked_img # 解鎖圖片載入失敗時，退回鎖著的圖片
 
-# 載入置物櫃門特寫圖片（點擊操作台右下角的櫃門後顯示），鎖著／解鎖分別對應 box_locked.png、box_unlocked.png
+# 載入置物櫃門特寫圖片（點擊操作台右下角的櫃門後顯示），做法一樣：等比例縮放、置中顯示。鎖著／解鎖分別對應 box_locked.png、box_unlocked.png
 try:
-    box_locked_img_original = pygame.image.load(asset_path('box_locked.png')).convert_alpha()
-    box_locked_img = pygame.transform.smoothscale(box_locked_img_original, (WIDTH, HEIGHT))
+    box_locked_img = load_height_locked_image('box_locked.png')
 except pygame.error as e:
     print(f"無法載入圖片 'box_locked.png': {e}")
     print("請確認 'box_locked.png' 檔案與 main.py 在同一個資料夾中。")
@@ -532,8 +537,7 @@ except pygame.error as e:
     box_locked_img = None # 如果圖片載入失敗，設定為 None
 
 try:
-    box_unlocked_img_original = pygame.image.load(asset_path('box_unlocked.png')).convert_alpha()
-    box_unlocked_img = pygame.transform.smoothscale(box_unlocked_img_original, (WIDTH, HEIGHT))
+    box_unlocked_img = load_height_locked_image('box_unlocked.png')
 except pygame.error as e:
     print(f"無法載入圖片 'box_unlocked.png': {e}")
     print("請確認 'box_unlocked.png' 檔案與 main.py 在同一個資料夾中。")
@@ -940,7 +944,10 @@ def get_scene_width(scene_name):
     if 'CARRIAGE' in scene_name:
         return CARRIAGE_WIDTH
     elif 'CONNECTION' in scene_name:
-        return CONNECTION_WIDTH
+        # 每個連接處場景用的圖片寬度不一定相同（廁所／工具間／一般通道），
+        # 世界寬度要對應各自圖片的實際寬度，門才會剛好對齊圖片邊緣
+        connect_img = CONNECTION_SCENE_IMAGES.get(scene_name)
+        return connect_img.get_width() if connect_img else CONNECTION_WIDTH
     else: # COCKPIT
         return COCKPIT_WIDTH
 
@@ -1219,13 +1226,13 @@ def get_current_scene_door_at(rect):
 
 # --- 駕駛艙操作台細節（按 F 進入細節畫面，改成顯示 operator_day_locked.png／operator_day_unlocked.png）---
 CONSOLE_FOCUS_SCENE = 'COCKPIT'
-console_cabinet_rect = pygame.Rect(30, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 100, DOOR_HEIGHT) # 操作台下置物櫃
+console_cabinet_rect = pygame.Rect(107, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 79, DOOR_HEIGHT) # 操作台下置物櫃（等比例縮放後的位置）
 
-# 操作台細節畫面裡，右下角置物櫃門的範圍，點擊後會聚焦看櫃門特寫（box_locked.png／box_unlocked.png）
-console_cabinet_door_rect = pygame.Rect(547, 287, 177, 100)
+# 操作台細節畫面裡，右下角置物櫃門的範圍，點擊後會聚焦看櫃門特寫（box_locked.png／box_unlocked.png）（等比例縮放後的位置）
+console_cabinet_door_rect = pygame.Rect(510, 287, 133, 100)
 
-# 櫃門特寫畫面裡，門上四個孔洞的位置，每個都蓋著一顆螺絲（box_screw_icon），要有螺絲起子才能點擊轉開
-console_box_screw_positions = [(447, 142), (439, 173), (439, 236), (446, 273)]
+# 櫃門特寫畫面裡，門上四個孔洞的位置，每個都蓋著一顆螺絲（box_screw_icon），要有螺絲起子才能點擊轉開（等比例縮放後的位置）
+console_box_screw_positions = [(435, 142), (429, 173), (429, 236), (435, 273)]
 console_box_screw_rects = []
 for _screw_pos in console_box_screw_positions:
     _screw_rect = pygame.Rect(0, 0, 32, 32)
@@ -1234,16 +1241,16 @@ for _screw_pos in console_box_screw_positions:
 console_box_screws = [True, True, True, True] # True 表示該孔洞的螺絲還在，尚未被轉開
 console_box_unlocked = False # 四顆螺絲都被轉開後才會變 True，畫面換成 box_unlocked.png
 
-# 櫃門解鎖後，裡面的《夜間行駛生存指南》擺放的位置
-console_box_guide_pos = (484, 275)
+# 櫃門解鎖後，裡面的《夜間行駛生存指南》擺放的位置（等比例縮放後的位置）
+console_box_guide_pos = (463, 275)
 console_box_guide_rect = pygame.Rect(0, 0, 70, 70)
 console_box_guide_rect.center = console_box_guide_pos
 
 
 # --- 駕駛室的櫃子（按 F 進去看櫃子內部，裡面有老式手電筒、工具間鑰匙可以拿，再按 F 離開）---
 DRIVE_CABINET_SCENE = 'COCKPIT'
-drive_cabinet_interact_rect = pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - 180, 100, 180) # 對應背景圖片裡玻璃櫃的位置
-drive_cabinet_interact_rect.centerx = 517
+drive_cabinet_interact_rect = pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - 180, 100, 180) # 對應背景圖片裡玻璃櫃的位置（等比例縮放後的位置）
+drive_cabinet_interact_rect.centerx = 406
 
 FLASHLIGHT_CASE_ITEM_NAME = '老式手電筒'
 flashlight_case_pos = (400, 254) # 櫃子內部特寫畫面裡道具擺放的位置
@@ -1258,16 +1265,16 @@ toolroom_key_case_rect.center = toolroom_key_case_pos
 # --- 連接處的廁所（按 F 進去看廁所內部，再按 F 離開）---
 TOILET_SCENE = 'CONNECTION_2'
 toilet_interact_rect = pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - 180, 100, 180) # 對應圖片中間的廁所門
-toilet_interact_rect.centerx = CONNECTION_WIDTH // 2
+toilet_interact_rect.centerx = (connect_toilet_day_img.get_width() if connect_toilet_day_img else CONNECTION_WIDTH) // 2
 
 # --- 連接處的工具間（按 F 進去，點工作桌可以看特寫、拿走螺絲起子，按 F 逐層退出）---
 TOOLROOM_SCENE = 'CONNECTION_3'
 toolroom_interact_rect = pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - 180, 100, 180) # 對應圖片中間的工具間門
-toolroom_interact_rect.centerx = CONNECTION_WIDTH // 2
+toolroom_interact_rect.centerx = (connect_toolroom_day_img.get_width() if connect_toolroom_day_img else CONNECTION_WIDTH) // 2
 
-work_table_rect = pygame.Rect(309, 129, 214, 197) # 工具間畫面裡工作桌的範圍，滑鼠點擊用
+work_table_rect = pygame.Rect(302, 129, 230, 196) # 工具間畫面裡工作桌的範圍（等比例縮放後的位置），滑鼠點擊用
 SCREWDRIVER_TABLE_ITEM_NAME = '維修員留下的螺絲起子'
-screwdriver_table_pos = (367, 225) # 螺絲起子特寫畫面裡道具擺放的位置
+screwdriver_table_pos = (279, 188) # 螺絲起子特寫畫面裡道具擺放的位置（等比例縮放後的位置）
 screwdriver_table_rect = pygame.Rect(0, 0, 90, 90) # 圖示放大1.5倍（60->90），互動範圍跟著放大
 screwdriver_table_rect.center = screwdriver_table_pos
 
@@ -1604,10 +1611,12 @@ def draw_cockpit_scene(camera_offset_x):
         # 取得生存指南後，置物櫃已經打開過了，改用 unlocked 版本的背景
         day_img = drive_room_day_unlocked_img if has_guide else drive_room_day_img
         if day_img:
+            screen.fill(BLACK)
             screen.blit(day_img, (-camera_offset_x, 0))
             return
     if not is_daytime() and drive_room_night_img:
         # 晚上使用駕駛室背景圖片，蓋掉 draw_background 畫的素色牆壁與地板
+        screen.fill(BLACK)
         screen.blit(drive_room_night_img, (-camera_offset_x, 0))
         return
 
@@ -1771,7 +1780,7 @@ def draw_console_focus():
     screen.fill(BLACK)
     bg_img = operator_day_unlocked_img if console_box_unlocked else operator_day_locked_img
     if bg_img:
-        screen.blit(bg_img, (0, 0))
+        screen.blit(bg_img, ((WIDTH - bg_img.get_width()) // 2, 0))
 
     mouse_pos = to_logical_pos(pygame.mouse.get_pos())
     draw_hover_glow(console_cabinet_door_rect, mouse_pos)
@@ -1787,7 +1796,7 @@ def draw_box_view():
 
     if not console_box_unlocked:
         if box_locked_img:
-            screen.blit(box_locked_img, (0, 0))
+            screen.blit(box_locked_img, ((WIDTH - box_locked_img.get_width()) // 2, 0))
         has_screwdriver = SCREWDRIVER_TABLE_ITEM_NAME in inventory
         for screw_pos, screw_present, screw_rect in zip(console_box_screw_positions, console_box_screws, console_box_screw_rects):
             if screw_present and has_screwdriver:
@@ -1800,7 +1809,7 @@ def draw_box_view():
             hint_text = "螺絲鎖得很緊，需要螺絲起子才能轉開・F : 離開"
     else:
         if box_unlocked_img:
-            screen.blit(box_unlocked_img, (0, 0))
+            screen.blit(box_unlocked_img, ((WIDTH - box_unlocked_img.get_width()) // 2, 0))
         if not has_guide:
             draw_hover_glow(console_box_guide_rect, mouse_pos)
             guide_icon = ITEM_ICONS.get('《夜間行駛生存指南》')
@@ -1828,7 +1837,7 @@ def draw_bottom_f_hint(text):
 def draw_toilet_view():
     """繪製走進廁所後看到的畫面，底部顯示按 F 離開的提示"""
     if toilet_img:
-        screen.blit(toilet_img, (0, 0))
+        screen.blit(toilet_img, ((WIDTH - toilet_img.get_width()) // 2, 0))
     else:
         screen.fill(BLACK)
     draw_bottom_f_hint("F : 離開廁所")
@@ -1837,7 +1846,7 @@ def draw_toilet_view():
 def draw_toolroom_view():
     """繪製走進工具間後看到的畫面，可以用滑鼠點工作桌看特寫，底部顯示按 F 離開的提示"""
     if toolroom_img:
-        screen.blit(toolroom_img, (0, 0))
+        screen.blit(toolroom_img, ((WIDTH - toolroom_img.get_width()) // 2, 0))
     else:
         screen.fill(BLACK)
     draw_hover_glow(work_table_rect, to_logical_pos(pygame.mouse.get_pos()))
@@ -1847,7 +1856,7 @@ def draw_toolroom_view():
 def draw_tooltable_view():
     """繪製工作桌特寫畫面，桌上如果還沒被拿走就顯示螺絲起子，底部顯示按 F 離開的提示"""
     if tooltable_img:
-        screen.blit(tooltable_img, (0, 0))
+        screen.blit(tooltable_img, ((WIDTH - tooltable_img.get_width()) // 2, 0))
     else:
         screen.fill(BLACK)
 
@@ -2008,8 +2017,81 @@ def draw_night_overlay():
     screen.blit(overlay, (0, 0))
 
 
+def _build_flashlight_layers():
+    """預先算好手電筒光束的柔和漸層貼圖（只需要算一次，之後每一幀直接貼圖，不用重算），
+    參考真實手電筒的樣子：燈泡本身有明顯的高亮熱點、光束隨距離擴散變寬、
+    兩側邊緣柔和過渡（不是死板的三角形硬邊），越遠越暗但保留一點微光、不會瞬間全黑。
+    回傳的貼圖預設光源朝右（+x方向），使用時依主角朝向左右翻轉即可。"""
+    import numpy as np
+    import pygame.surfarray
+
+    cone_length = 260 # 光束長度
+    half_width_near = 24 # 光束起點的半寬（比較窄）
+    half_width_far = 130 # 光束末端的半寬（隨距離擴散變寬）
+    hotspot_radius = 42 # 燈泡本身高亮熱點的半徑
+    pad = hotspot_radius + 10 # 貼圖邊界留一點餘裕，確保熱點的圓形範圍不會被貼圖邊界硬生生切到
+    tex_w = cone_length + pad
+    tex_h = round(2 * half_width_far + pad * 2)
+    origin_x, origin_y = float(pad), tex_h / 2.0
+
+    xs = np.arange(tex_w, dtype=np.float32).reshape(1, -1)
+    ys = np.arange(tex_h, dtype=np.float32).reshape(-1, 1)
+    dx = xs - origin_x # 沿光束方向的距離
+    dy = ys - origin_y # 偏離光束中心軸的距離
+
+    t = np.clip(dx / cone_length, 0.0, 1.0)
+    half_width = half_width_near + (half_width_far - half_width_near) * t
+    lateral_ratio = np.abs(dy) / np.maximum(half_width, 1e-3)
+    edge = np.clip(1.0 - (lateral_ratio - 0.55) / 0.45, 0.0, 1.0)
+    edge = edge * edge * (3 - 2 * edge) # smoothstep，柔化光束兩側邊緣
+
+    dist_falloff = np.clip(1.0 - dx / cone_length, 0.0, 1.0) ** 1.3
+    dist_falloff = 0.12 + 0.88 * dist_falloff # 保留一點微光，尾端不會瞬間全黑
+    end_fade = np.clip((1.0 - t) / 0.08, 0.0, 1.0) # 貼圖最右邊 8% 淡出到 0，避免貼圖邊界出現一整塊硬邊
+    dist_falloff = dist_falloff * end_fade
+
+    cone_intensity = edge * dist_falloff
+    cone_intensity = np.where(dx >= -6, cone_intensity, 0.0) # 光束本身不會往後延伸
+
+    dist_from_origin = np.sqrt(dx ** 2 + dy ** 2)
+    hotspot = np.clip(1.0 - dist_from_origin / hotspot_radius, 0.0, 1.0) ** 2 # 燈泡本身的柔和高亮核心
+
+    # 光源後方保留微弱的光暈（像手電筒燈身、握把附近透出的微光），比前方暗很多、
+    # 用 smoothstep 讓前後亮度平滑過渡，不會在光源正中間出現一圈生硬的分界
+    backward_t = np.clip((dx + 8.0) / 16.0, 0.0, 1.0)
+    backward_t = backward_t * backward_t * (3 - 2 * backward_t)
+    hotspot = hotspot * (0.35 + 0.65 * backward_t)
+
+    intensity = np.clip(np.maximum(cone_intensity, hotspot), 0.0, 1.0)
+
+    def to_surface(color, max_alpha):
+        # 顏色要跟著 intensity 一起淡出（premultiplied），不然用 BLEND_RGBA_ADD／SUB 疊圖時，
+        # 顏色不會被 alpha 加權，邊緣就會出現一整塊沒有柔化的矩形硬邊
+        alpha_hw = np.clip(intensity * max_alpha, 0, 255).astype(np.uint8)
+        intensity_wh = intensity.T
+        surf = pygame.Surface((tex_w, tex_h), pygame.SRCALPHA)
+        rgb = np.empty((tex_w, tex_h, 3), dtype=np.uint8)
+        for c in range(3):
+            rgb[:, :, c] = np.clip(intensity_wh * color[c], 0, 255).astype(np.uint8)
+        pygame.surfarray.pixels3d(surf)[:, :, :] = rgb
+        pygame.surfarray.pixels_alpha(surf)[:, :] = alpha_hw.T
+        return surf
+
+    # dark_reduction：從黑暗遮罩裡「挖」出柔和漸層的洞，露出原本場景
+    # glow：疊加一點暖色光暈，讓照到的地方看起來像真的被暖光照亮，不只是變回原色
+    dark_reduction_surf = to_surface((255, 255, 255), 215)
+    glow_surf = to_surface((255, 205, 130), 75)
+    return dark_reduction_surf, glow_surf, (round(origin_x), round(origin_y))
+
+
+_flashlight_dark_img, _flashlight_glow_img, _flashlight_origin_local = _build_flashlight_layers()
+_flashlight_dark_img_flipped = pygame.transform.flip(_flashlight_dark_img, True, False)
+_flashlight_glow_img_flipped = pygame.transform.flip(_flashlight_glow_img, True, False)
+
+
 def draw_lights_out_overlay(camera_offset_x):
-    """列車燈光熄滅期間，疊加更深的黑暗效果；若手電筒開啟則照亮角色前方"""
+    """列車燈光熄滅期間，疊加更深的黑暗效果；若手電筒開啟，用預先算好的柔和漸層光束照亮角色前方，
+    參考真實手電筒的效果（熱點、擴散、柔邊、暖色光暈）"""
     if not lights_out:
         return
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -2018,20 +2100,20 @@ def draw_lights_out_overlay(camera_offset_x):
     if flashlight_on and '老式手電筒' in inventory:
         origin_x = conductor_rect.centerx - camera_offset_x
         origin_y = conductor_rect.centery
-        direction = 1 if facing_direction == 'RIGHT' else -1
-        cone_length = 220
-        cone_half_width = 90
 
-        light_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        cone_points = [
-            (origin_x, origin_y - 20),
-            (origin_x + direction * cone_length, origin_y - cone_half_width),
-            (origin_x + direction * cone_length, origin_y + cone_half_width),
-            (origin_x, origin_y + 20),
-        ]
-        pygame.draw.polygon(light_surf, (255, 255, 255, 190), cone_points)
-        pygame.draw.circle(light_surf, (255, 255, 255, 210), (origin_x, origin_y), 45)
-        overlay.blit(light_surf, (0, 0), special_flags=pygame.BLEND_RGBA_SUB)
+        if facing_direction == 'LEFT':
+            dark_surf, glow_surf = _flashlight_dark_img_flipped, _flashlight_glow_img_flipped
+            local_ox = dark_surf.get_width() - _flashlight_origin_local[0]
+        else:
+            dark_surf, glow_surf = _flashlight_dark_img, _flashlight_glow_img
+            local_ox = _flashlight_origin_local[0]
+        local_oy = _flashlight_origin_local[1]
+
+        blit_pos = (origin_x - local_ox, origin_y - local_oy)
+        overlay.blit(dark_surf, blit_pos, special_flags=pygame.BLEND_RGBA_SUB)
+        screen.blit(overlay, (0, 0))
+        screen.blit(glow_surf, blit_pos, special_flags=pygame.BLEND_RGBA_ADD)
+        return
 
     screen.blit(overlay, (0, 0))
 
