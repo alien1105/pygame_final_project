@@ -672,6 +672,7 @@ for _icon_item_name, _icon_filename, _icon_max_size in [
     ('舊路線圖', 'old_route_map.png', 24),
     ('舊報紙', 'old_news.png', 24),
     ('車站員工日誌', '員工日誌.png', 24),
+    ('小女孩的畫', 'paint.png', 110),
     ('《夜間行駛生存指南》', '生存指南.png', 110),
 ]:
     try:
@@ -2288,6 +2289,77 @@ def draw_interact_hint(camera_offset_x):
             screen.blit(hint_bg, (screen_x, screen_y))
             break
 
+
+def try_interact():
+    """檢查角色目前是否在某個可互動範圍內，是的話就觸發對應的互動
+    （NPC對話、撿道具、開櫃子、開門、切換場景等）。按 F 鍵或滑鼠左鍵都會呼叫這個函式。"""
+    global dialogue_lines, dialogue_index, active_npc, game_state, current_scene
+
+    if not lights_out and current_scene == OLD_LADY_SCENE and is_daytime() and conductor_rect.colliderect(old_lady_interact_rect):
+        # 與老太太互動，開始對話（聊過一次之後改播重複對話）
+        dialogue_lines = old_lady_dialogue_repeat if has_talked_to_old_lady else old_lady_dialogue
+        dialogue_index = 0
+        active_npc = 'OLD_LADY'
+        game_state = 'DIALOGUE'
+    elif not lights_out and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_interact_rect):
+        # 與小女孩互動，開始對話（已經拿過畫的話改播重複對話）
+        dialogue_lines = girl_dialogue_repeat if has_girl_painting else girl_dialogue
+        dialogue_index = 0
+        active_npc = 'GIRL'
+        game_state = 'DIALOGUE'
+    elif not lights_out and current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX and conductor_rect.colliderect(old_worker_interact_rect):
+        # 與老維修員互動，開始對話
+        dialogue_lines = build_old_worker_dialogue()
+        dialogue_index = 0
+        active_npc = 'OLD_WORKER'
+        game_state = 'DIALOGUE'
+    elif not lights_out and get_item_spot_at(current_scene, conductor_rect) is not None:
+        # 撿拾道具
+        item_spot = get_item_spot_at(current_scene, conductor_rect)
+        inventory.extend(item_spot['items'])
+        show_item_popup(item_spot['items'][-1])
+        item_spot['collected'] = True
+        pickup_line = (" ", f"獲得了「{ '、'.join(item_spot['items']) }」。")
+        dialogue_lines = item_spot.get('reveal_lines', []) + [pickup_line]
+        dialogue_index = 0
+        # 拿到車站員工日誌後要接著切到第二天晚上，其餘道具照舊撿完直接回到遊戲
+        active_npc = 'STAFF_LOG_PICKUP' if '車站員工日誌' in item_spot['items'] else None
+        game_state = 'DIALOGUE'
+    elif not lights_out and current_scene == CONSOLE_FOCUS_SCENE and conductor_rect.colliderect(console_cabinet_rect):
+        # 聚焦查看操作台置物櫃細節
+        game_state = 'CONSOLE_FOCUS'
+    elif not lights_out and current_scene == DRIVE_CABINET_SCENE and conductor_rect.colliderect(drive_cabinet_interact_rect):
+        # 查看駕駛室櫃子內部
+        game_state = 'CASE_VIEW'
+    elif not lights_out and current_scene == TOILET_SCENE and conductor_rect.colliderect(toilet_interact_rect):
+        # 走進廁所
+        game_state = 'TOILET_VIEW'
+    elif not lights_out and current_scene == TOOLROOM_SCENE and conductor_rect.colliderect(toolroom_interact_rect):
+        if TOOLROOM_KEY_ITEM_NAME in inventory:
+            # 走進工具間
+            game_state = 'TOOLROOM_VIEW'
+        else:
+            dialogue_lines = [(" ", "門鎖住了，需要工具間鑰匙才能進去。")]
+            dialogue_index = 0
+            active_npc = None
+            game_state = 'DIALOGUE'
+    elif lights_out and not flashlight_on:
+        # 燈光熄滅、手電筒還沒打開時，完全無法互動（包含開門），也不顯示任何提示
+        pass
+    else:
+        # 場景切換邏輯：依 SCENE_ORDER 自動判斷要往前一節還是下一節場景移動
+        scene_doors = doors.get(current_scene, {})
+        scene_index = SCENE_ORDER.index(current_scene)
+        if 'prev' in scene_doors and conductor_rect.colliderect(scene_doors['prev']):
+            prev_scene = SCENE_ORDER[scene_index - 1]
+            current_scene = prev_scene
+            conductor_rect.x = doors[prev_scene]['next'].left - conductor_rect.width - 10
+        elif 'next' in scene_doors and conductor_rect.colliderect(scene_doors['next']):
+            next_scene = SCENE_ORDER[scene_index + 1]
+            current_scene = next_scene
+            conductor_rect.x = doors[next_scene]['prev'].right + 10
+
+
 # 4. 遊戲主迴圈
 dt = 0 # 每一幀經過的毫秒數，供走路動畫計時使用
 running = True
@@ -2350,7 +2422,7 @@ while running:
             if event.type == pygame.QUIT:
                 running = False
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_TAB:
+                if event.key in (pygame.K_TAB, pygame.K_SPACE, pygame.K_ESCAPE):
                     if not intro_monologue_shown:
                         # 第一次關閉手冊，先播放主角的開場自白，播完才進入遊戲
                         intro_monologue_shown = True
@@ -2389,75 +2461,16 @@ while running:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     game_state = 'PAUSE_MENU'
-                if event.key == pygame.K_TAB:
+                if event.key == pygame.K_TAB or event.key == pygame.K_SPACE:
                     game_state = 'MANUAL'
                 if event.key == pygame.K_b:
                     game_state = 'INVENTORY'
                 if event.key == pygame.K_l and '老式手電筒' in inventory:
                     flashlight_on = not flashlight_on
-                if event.key == pygame.K_f and not lights_out and current_scene == OLD_LADY_SCENE and is_daytime() and conductor_rect.colliderect(old_lady_interact_rect):
-                    # 與老太太互動，開始對話（聊過一次之後改播重複對話）
-                    dialogue_lines = old_lady_dialogue_repeat if has_talked_to_old_lady else old_lady_dialogue
-                    dialogue_index = 0
-                    active_npc = 'OLD_LADY'
-                    game_state = 'DIALOGUE'
-                elif event.key == pygame.K_f and not lights_out and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_interact_rect):
-                    # 與小女孩互動，開始對話（已經拿過畫的話改播重複對話）
-                    dialogue_lines = girl_dialogue_repeat if has_girl_painting else girl_dialogue
-                    dialogue_index = 0
-                    active_npc = 'GIRL'
-                    game_state = 'DIALOGUE'
-                elif event.key == pygame.K_f and not lights_out and current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX and conductor_rect.colliderect(old_worker_interact_rect):
-                    # 與老維修員互動，開始對話
-                    dialogue_lines = build_old_worker_dialogue()
-                    dialogue_index = 0
-                    active_npc = 'OLD_WORKER'
-                    game_state = 'DIALOGUE'
-                elif event.key == pygame.K_f and not lights_out and get_item_spot_at(current_scene, conductor_rect) is not None:
-                    # 撿拾道具
-                    item_spot = get_item_spot_at(current_scene, conductor_rect)
-                    inventory.extend(item_spot['items'])
-                    show_item_popup(item_spot['items'][-1])
-                    item_spot['collected'] = True
-                    pickup_line = (" ", f"獲得了「{ '、'.join(item_spot['items']) }」。")
-                    dialogue_lines = item_spot.get('reveal_lines', []) + [pickup_line]
-                    dialogue_index = 0
-                    # 拿到車站員工日誌後要接著切到第二天晚上，其餘道具照舊撿完直接回到遊戲
-                    active_npc = 'STAFF_LOG_PICKUP' if '車站員工日誌' in item_spot['items'] else None
-                    game_state = 'DIALOGUE'
-                elif event.key == pygame.K_f and not lights_out and current_scene == CONSOLE_FOCUS_SCENE and conductor_rect.colliderect(console_cabinet_rect):
-                    # 聚焦查看操作台置物櫃細節
-                    game_state = 'CONSOLE_FOCUS'
-                elif event.key == pygame.K_f and not lights_out and current_scene == DRIVE_CABINET_SCENE and conductor_rect.colliderect(drive_cabinet_interact_rect):
-                    # 查看駕駛室櫃子內部
-                    game_state = 'CASE_VIEW'
-                elif event.key == pygame.K_f and not lights_out and current_scene == TOILET_SCENE and conductor_rect.colliderect(toilet_interact_rect):
-                    # 走進廁所
-                    game_state = 'TOILET_VIEW'
-                elif event.key == pygame.K_f and not lights_out and current_scene == TOOLROOM_SCENE and conductor_rect.colliderect(toolroom_interact_rect):
-                    if TOOLROOM_KEY_ITEM_NAME in inventory:
-                        # 走進工具間
-                        game_state = 'TOOLROOM_VIEW'
-                    else:
-                        dialogue_lines = [(" ", "門鎖住了，需要工具間鑰匙才能進去。")]
-                        dialogue_index = 0
-                        active_npc = None
-                        game_state = 'DIALOGUE'
-                elif event.key == pygame.K_f and lights_out and not flashlight_on:
-                    # 燈光熄滅、手電筒還沒打開時，完全無法互動（包含開門），也不顯示任何提示
-                    pass
-                elif event.key == pygame.K_f:
-                    # 場景切換邏輯：依 SCENE_ORDER 自動判斷要往前一節還是下一節場景移動
-                    scene_doors = doors.get(current_scene, {})
-                    scene_index = SCENE_ORDER.index(current_scene)
-                    if 'prev' in scene_doors and conductor_rect.colliderect(scene_doors['prev']):
-                        prev_scene = SCENE_ORDER[scene_index - 1]
-                        current_scene = prev_scene
-                        conductor_rect.x = doors[prev_scene]['next'].left - conductor_rect.width - 10
-                    elif 'next' in scene_doors and conductor_rect.colliderect(scene_doors['next']):
-                        next_scene = SCENE_ORDER[scene_index + 1]
-                        current_scene = next_scene
-                        conductor_rect.x = doors[next_scene]['prev'].right + 10
+                if event.key == pygame.K_f:
+                    try_interact()
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                try_interact()
         # B. 遊戲邏輯
         current_world_width = get_scene_width(current_scene)
 
@@ -2574,92 +2587,95 @@ while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_f or event.key == pygame.K_SPACE:
-                    dialogue_index += 1
-                    if dialogue_index >= len(dialogue_lines):
-                        if active_npc == 'OLD_LADY':
-                            has_talked_to_old_lady = True
-                            active_npc = None
-                            game_state = 'PLAYING'
-                        elif active_npc == 'GIRL':
-                            if not has_girl_painting:
-                                has_girl_painting = True
-                                inventory.append('小女孩的畫')
-                                show_item_popup('小女孩的畫')
-                            active_npc = None
-                            game_state = 'PLAYING'
-                        elif active_npc == 'OLD_WORKER':
-                            if '舊路線圖' not in inventory:
-                                # 聽完他說「以前，是有第七站的。」之後拿到舊路線圖
-                                inventory.append('舊路線圖')
-                                show_item_popup('舊路線圖')
-                            active_npc = None
-                            game_state = 'PLAYING'
-                        elif active_npc == 'STAFF_LOG_PICKUP':
-                            # 拿到車站員工日誌後，直接切到第二天晚上並播放晚上的開場劇情
-                            day_night_index = DAY_NIGHT_STAGES.index('DAY2_NIGHT')
-                            day2_night_triggered = True
-                            show_day_title_card('DAY2_NIGHT')
-                            dialogue_lines = night2_intro_lines
-                            dialogue_index = 0
-                            active_npc = 'NIGHT2_INTRO'
-                            game_state = 'DIALOGUE'
-                        elif active_npc == 'NIGHT1_INTRO':
-                            active_npc = None
-                            show_day_title_card('DAY1_NIGHT')
-                            # 任務指引改成巡視車廂，走到第四節車廂前燈光都還是正常的
-                            night1_patrol_active = True
-                            game_state = 'PLAYING'
-                        elif active_npc == 'NIGHT1_BLACKOUT':
-                            active_npc = None
-                            game_state = 'PLAYING' # 任務指引改成打開手電筒（由 lights_out 狀態自動顯示）
-                        elif active_npc == 'NIGHT1_KNOCK':
-                            active_npc = None
-                            game_state = 'NIGHT1_CHOICE'
-                        elif active_npc == 'NIGHT1_NO_FLASHLIGHT':
-                            active_npc = None
-                            game_over_reason = "沒有手電筒，你在黑暗中迷失了方向……"
-                            game_state = 'GAME_OVER'
-                        elif active_npc == 'NIGHT1_OUTRO':
-                            active_npc = None
-                            day1_night_resolved = True
-                            day_night_index = DAY_NIGHT_STAGES.index('DAY2_DAY') # 劇情結束後直接跳到第二天白天
-                            show_day_title_card('DAY2_DAY')
-                            game_state = 'PLAYING'
-                        elif active_npc == 'NIGHT1_CAUGHT':
-                            active_npc = None
-                            game_over_reason = "你打開了門，被那個「多出來的人」發現了。"
-                            game_state = 'GAME_OVER'
-                        elif active_npc == 'NIGHT2_INTRO':
-                            active_npc = None
-                            start_choice(
-                                "要緊急煞車嗎？",
-                                "煞車", (night2_stop_result_brake + night2_platform_lines, 'NIGHT2_PLATFORM'),
-                                "不煞車", (night2_stop_result_no_brake + night2_platform_lines, 'NIGHT2_PLATFORM'),
-                            )
-                        elif active_npc == 'NIGHT2_PLATFORM':
-                            active_npc = None
-                            start_choice(
-                                "要打開車門嗎？",
-                                "開門", (night2_lines_open_door, 'NIGHT2_CAUGHT'),
-                                "不開門", (night2_lines_closed_door, 'NIGHT2_SAFE'),
-                            )
-                        elif active_npc == 'NIGHT2_SAFE':
-                            active_npc = None
-                            to_be_continued_start_time = pygame.time.get_ticks()
-                            game_state = 'TO_BE_CONTINUED'
-                        elif active_npc == 'NIGHT2_CAUGHT':
-                            active_npc = None
-                            game_over_reason = "你打開了車門，月台上的人朝你走了過來。"
-                            game_state = 'GAME_OVER'
-                        elif active_npc == 'INTRO':
-                            active_npc = None
-                            game_state = 'PLAYING'
-                            show_day_title_card('DAY1_DAY') # 開場自白結束、正式進入遊戲時顯示「第一天白天」標題卡
-                        else:
-                            active_npc = None
-                            game_state = 'PLAYING'
+            advance_dialogue = (
+                (event.type == pygame.KEYDOWN and event.key in (pygame.K_f, pygame.K_SPACE)) or
+                (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1)
+            )
+            if advance_dialogue:
+                dialogue_index += 1
+                if dialogue_index >= len(dialogue_lines):
+                    if active_npc == 'OLD_LADY':
+                        has_talked_to_old_lady = True
+                        active_npc = None
+                        game_state = 'PLAYING'
+                    elif active_npc == 'GIRL':
+                        if not has_girl_painting:
+                            has_girl_painting = True
+                            inventory.append('小女孩的畫')
+                            show_item_popup('小女孩的畫')
+                        active_npc = None
+                        game_state = 'PLAYING'
+                    elif active_npc == 'OLD_WORKER':
+                        if '舊路線圖' not in inventory:
+                            # 聽完他說「以前，是有第七站的。」之後拿到舊路線圖
+                            inventory.append('舊路線圖')
+                            show_item_popup('舊路線圖')
+                        active_npc = None
+                        game_state = 'PLAYING'
+                    elif active_npc == 'STAFF_LOG_PICKUP':
+                        # 拿到車站員工日誌後，直接切到第二天晚上並播放晚上的開場劇情
+                        day_night_index = DAY_NIGHT_STAGES.index('DAY2_NIGHT')
+                        day2_night_triggered = True
+                        show_day_title_card('DAY2_NIGHT')
+                        dialogue_lines = night2_intro_lines
+                        dialogue_index = 0
+                        active_npc = 'NIGHT2_INTRO'
+                        game_state = 'DIALOGUE'
+                    elif active_npc == 'NIGHT1_INTRO':
+                        active_npc = None
+                        show_day_title_card('DAY1_NIGHT')
+                        # 任務指引改成巡視車廂，走到第四節車廂前燈光都還是正常的
+                        night1_patrol_active = True
+                        game_state = 'PLAYING'
+                    elif active_npc == 'NIGHT1_BLACKOUT':
+                        active_npc = None
+                        game_state = 'PLAYING' # 任務指引改成打開手電筒（由 lights_out 狀態自動顯示）
+                    elif active_npc == 'NIGHT1_KNOCK':
+                        active_npc = None
+                        game_state = 'NIGHT1_CHOICE'
+                    elif active_npc == 'NIGHT1_NO_FLASHLIGHT':
+                        active_npc = None
+                        game_over_reason = "沒有手電筒，你在黑暗中迷失了方向……"
+                        game_state = 'GAME_OVER'
+                    elif active_npc == 'NIGHT1_OUTRO':
+                        active_npc = None
+                        day1_night_resolved = True
+                        day_night_index = DAY_NIGHT_STAGES.index('DAY2_DAY') # 劇情結束後直接跳到第二天白天
+                        show_day_title_card('DAY2_DAY')
+                        game_state = 'PLAYING'
+                    elif active_npc == 'NIGHT1_CAUGHT':
+                        active_npc = None
+                        game_over_reason = "你打開了門，被那個「多出來的人」發現了。"
+                        game_state = 'GAME_OVER'
+                    elif active_npc == 'NIGHT2_INTRO':
+                        active_npc = None
+                        start_choice(
+                            "要緊急煞車嗎？",
+                            "煞車", (night2_stop_result_brake + night2_platform_lines, 'NIGHT2_PLATFORM'),
+                            "不煞車", (night2_stop_result_no_brake + night2_platform_lines, 'NIGHT2_PLATFORM'),
+                        )
+                    elif active_npc == 'NIGHT2_PLATFORM':
+                        active_npc = None
+                        start_choice(
+                            "要打開車門嗎？",
+                            "開門", (night2_lines_open_door, 'NIGHT2_CAUGHT'),
+                            "不開門", (night2_lines_closed_door, 'NIGHT2_SAFE'),
+                        )
+                    elif active_npc == 'NIGHT2_SAFE':
+                        active_npc = None
+                        to_be_continued_start_time = pygame.time.get_ticks()
+                        game_state = 'TO_BE_CONTINUED'
+                    elif active_npc == 'NIGHT2_CAUGHT':
+                        active_npc = None
+                        game_over_reason = "你打開了車門，月台上的人朝你走了過來。"
+                        game_state = 'GAME_OVER'
+                    elif active_npc == 'INTRO':
+                        active_npc = None
+                        game_state = 'PLAYING'
+                        show_day_title_card('DAY1_DAY') # 開場自白結束、正式進入遊戲時顯示「第一天白天」標題卡
+                    else:
+                        active_npc = None
+                        game_state = 'PLAYING'
 
         draw_background(camera_x)
         draw_old_lady(camera_x)
