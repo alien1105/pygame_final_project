@@ -1031,12 +1031,6 @@ item_spots = [
         'collected': False,
     },
     {
-        'scene': 'CONNECTION_1',
-        'rect': pygame.Rect(30, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 70, DOOR_HEIGHT), # 連接處牆壁上
-        'items': ['舊路線圖'],
-        'collected': False,
-    },
-    {
         'scene': 'CARRIAGE_1',
         'rect': pygame.Rect(650, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 60, DOOR_HEIGHT), # 車廂座位上
         'items': ['舊報紙'],
@@ -1052,7 +1046,7 @@ item_spots = [
         'rect': pygame.Rect(340, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 60, DOOR_HEIGHT), # 駕駛室角落
         'items': ['車站員工日誌'],
         'collected': False,
-        'min_day_index': 2, # 第二天白天起才會出現
+        'requires_item': '舊路線圖', # 要先跟老維修員拿到舊路線圖，日誌才會出現在駕駛室
         'reveal_lines': [
             ("旁白", "員工日誌最後一筆寫著："),
             ("旁白", "「00:17，青木站再次亮燈。」"),
@@ -1061,12 +1055,22 @@ item_spots = [
 ]
 
 
+def item_spot_available(spot):
+    """判斷道具點目前是否符合出現條件（天數限制、需要先取得的道具等）"""
+    if day_night_index < spot.get('min_day_index', 0):
+        return False
+    requires_item = spot.get('requires_item')
+    if requires_item and requires_item not in inventory:
+        return False
+    return True
+
+
 def get_item_spot_at(scene, rect):
     """回傳玩家目前所在位置可拾取、且尚未拾取的道具點（沒有則回傳 None）"""
     for spot in item_spots:
         if spot['collected'] or spot['scene'] != scene:
             continue
-        if day_night_index < spot.get('min_day_index', 0):
+        if not item_spot_available(spot):
             continue
         if rect.colliderect(spot['rect']):
             return spot
@@ -1134,6 +1138,19 @@ SCREWDRIVER_TABLE_ITEM_NAME = '維修員留下的螺絲起子'
 screwdriver_table_pos = (367, 225) # 螺絲起子特寫畫面裡道具擺放的位置
 screwdriver_table_rect = pygame.Rect(0, 0, 60, 60)
 screwdriver_table_rect.center = screwdriver_table_pos
+
+
+def draw_hover_glow(rect, mouse_pos, color=(255, 240, 150)):
+    """如果滑鼠停在 rect 上，在它周圍畫一圈柔和的亮光，提示這裡可以點擊互動"""
+    if not rect.collidepoint(mouse_pos):
+        return
+    glow = pygame.Surface((rect.width + 44, rect.height + 44), pygame.SRCALPHA)
+    center = glow.get_rect().center
+    for scale, alpha in ((1.4, 35), (1.22, 65), (1.08, 100)):
+        glow_rect = pygame.Rect(0, 0, round(rect.width * scale), round(rect.height * scale))
+        glow_rect.center = center
+        pygame.draw.rect(glow, (*color, alpha), glow_rect, border_radius=14)
+    screen.blit(glow, glow.get_rect(center=rect.center))
 
 
 def draw_simple_button(rect, text, bg_color):
@@ -1595,7 +1612,7 @@ def draw_item_spots(camera_offset_x):
     for spot in item_spots:
         if spot['scene'] != current_scene or spot['collected']:
             continue
-        if day_night_index < spot.get('min_day_index', 0):
+        if not item_spot_available(spot):
             continue
         marker_rect = pygame.Rect(0, 0, 26, 26)
         marker_rect.center = (spot['rect'].centerx - camera_offset_x, HEIGHT - FLOOR_HEIGHT - 30)
@@ -1616,6 +1633,9 @@ def draw_console_focus():
     if bg_img:
         screen.blit(bg_img, (0, 0))
 
+    mouse_pos = to_logical_pos(pygame.mouse.get_pos())
+    draw_hover_glow(console_cabinet_door_rect, mouse_pos)
+
     draw_bottom_f_hint("點擊右下角櫃門查看・F : 離開細節畫面")
 
 
@@ -1623,14 +1643,18 @@ def draw_box_view():
     """繪製置物櫃門的特寫畫面：鎖著時要用螺絲起子點掉四顆螺絲才能打開，
     打開後（box_unlocked.png）可以點擊裡面的《夜間行駛生存指南》拾取"""
     screen.fill(BLACK)
+    mouse_pos = to_logical_pos(pygame.mouse.get_pos())
 
     if not console_box_unlocked:
         if box_locked_img:
             screen.blit(box_locked_img, (0, 0))
-        for screw_pos, screw_present in zip(console_box_screw_positions, console_box_screws):
+        has_screwdriver = SCREWDRIVER_TABLE_ITEM_NAME in inventory
+        for screw_pos, screw_present, screw_rect in zip(console_box_screw_positions, console_box_screws, console_box_screw_rects):
+            if screw_present and has_screwdriver:
+                draw_hover_glow(screw_rect, mouse_pos)
             if screw_present and box_screw_icon:
                 screen.blit(box_screw_icon, box_screw_icon.get_rect(center=screw_pos))
-        if SCREWDRIVER_TABLE_ITEM_NAME in inventory:
+        if has_screwdriver:
             hint_text = "點擊螺絲用起子轉開・F : 離開"
         else:
             hint_text = "螺絲鎖得很緊，需要螺絲起子才能轉開・F : 離開"
@@ -1638,6 +1662,7 @@ def draw_box_view():
         if box_unlocked_img:
             screen.blit(box_unlocked_img, (0, 0))
         if not has_guide:
+            draw_hover_glow(console_box_guide_rect, mouse_pos)
             guide_icon = ITEM_ICONS.get('《夜間行駛生存指南》')
             if guide_icon:
                 screen.blit(guide_icon, guide_icon.get_rect(center=console_box_guide_pos))
@@ -1675,6 +1700,7 @@ def draw_toolroom_view():
         screen.blit(toolroom_img, (0, 0))
     else:
         screen.fill(BLACK)
+    draw_hover_glow(work_table_rect, to_logical_pos(pygame.mouse.get_pos()))
     draw_bottom_f_hint("F : 離開工具間")
 
 
@@ -1686,6 +1712,7 @@ def draw_tooltable_view():
         screen.fill(BLACK)
 
     if SCREWDRIVER_TABLE_ITEM_NAME not in inventory:
+        draw_hover_glow(screwdriver_table_rect, to_logical_pos(pygame.mouse.get_pos()))
         icon = ITEM_ICONS.get(SCREWDRIVER_TABLE_ITEM_NAME)
         if icon:
             screen.blit(icon, icon.get_rect(center=screwdriver_table_pos))
@@ -1703,12 +1730,14 @@ def draw_case_view():
     if case_img:
         screen.blit(case_img, ((WIDTH - case_img.get_width()) // 2, 0))
 
+    mouse_pos = to_logical_pos(pygame.mouse.get_pos())
     for item_name, pos, fallback_rect in (
         (FLASHLIGHT_CASE_ITEM_NAME, flashlight_case_pos, flashlight_case_rect),
         (TOOLROOM_KEY_ITEM_NAME, toolroom_key_case_pos, toolroom_key_case_rect),
     ):
         if item_name in inventory:
             continue
+        draw_hover_glow(fallback_rect, mouse_pos)
         icon = ITEM_ICONS.get(item_name)
         if icon:
             screen.blit(icon, icon.get_rect(center=pos))
@@ -2035,7 +2064,7 @@ def draw_interact_hint(camera_offset_x):
         if current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX:
             interactables.append(old_worker_interact_rect)
         for spot in item_spots:
-            if spot['scene'] == current_scene and not spot['collected'] and day_night_index >= spot.get('min_day_index', 0):
+            if spot['scene'] == current_scene and not spot['collected'] and item_spot_available(spot):
                 interactables.append(spot['rect'])
         if current_scene == CONSOLE_FOCUS_SCENE:
             interactables.append(console_cabinet_rect)
@@ -2197,7 +2226,8 @@ while running:
                     pickup_line = (" ", f"獲得了「{ '、'.join(item_spot['items']) }」。")
                     dialogue_lines = item_spot.get('reveal_lines', []) + [pickup_line]
                     dialogue_index = 0
-                    active_npc = None
+                    # 拿到車站員工日誌後要接著切到第二天晚上，其餘道具照舊撿完直接回到遊戲
+                    active_npc = 'STAFF_LOG_PICKUP' if '車站員工日誌' in item_spot['items'] else None
                     game_state = 'DIALOGUE'
                 elif event.key == pygame.K_f and not lights_out and current_scene == CONSOLE_FOCUS_SCENE and conductor_rect.colliderect(console_cabinet_rect):
                     # 聚焦查看操作台置物櫃細節
@@ -2363,6 +2393,21 @@ while running:
                                 show_item_popup('小女孩的畫')
                             active_npc = None
                             game_state = 'PLAYING'
+                        elif active_npc == 'OLD_WORKER':
+                            if '舊路線圖' not in inventory:
+                                # 聽完他說「以前，是有第七站的。」之後拿到舊路線圖
+                                inventory.append('舊路線圖')
+                                show_item_popup('舊路線圖')
+                            active_npc = None
+                            game_state = 'PLAYING'
+                        elif active_npc == 'STAFF_LOG_PICKUP':
+                            # 拿到車站員工日誌後，直接切到第二天晚上並播放晚上的開場劇情
+                            day_night_index = DAY_NIGHT_STAGES.index('DAY2_NIGHT')
+                            day2_night_triggered = True
+                            dialogue_lines = night2_intro_lines
+                            dialogue_index = 0
+                            active_npc = 'NIGHT2_INTRO'
+                            game_state = 'DIALOGUE'
                         elif active_npc == 'NIGHT1_INTRO':
                             active_npc = None
                             # 任務指引改成巡視車廂，走到第五節車廂前燈光都還是正常的
