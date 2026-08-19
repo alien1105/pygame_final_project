@@ -202,6 +202,21 @@ pygame.mixer.set_reserved(2) # 保留聲道0、1專門給背景音樂用，不�
 music_channel_a = pygame.mixer.Channel(0) # 兩個聲道輪流當「目前播放中」跟「即將淡入」的那一軌
 music_channel_b = pygame.mixer.Channel(1)
 music_active_channel = None # 目前正在播放（前景）的聲道，None 表示沒有音樂在播
+
+# 晚上打開手電筒後遇到小女孩的恐怖事件音效（哼歌、尖叫），用一般的 Sound.play() 播放，
+# 會自動找聲道0、1以外的空閒聲道，不會跟背景音樂互搶
+try:
+    horror_girl_singing_sound = pygame.mixer.Sound(os.path.join('sound', 'horror_girl_singing.mp3'))
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入音效 'horror_girl_singing.mp3': {e}")
+    horror_girl_singing_sound = None
+try:
+    little_girl_scream_sound = pygame.mixer.Sound(os.path.join('sound', 'little_girl_scream.mp3'))
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入音效 'little_girl_scream.mp3': {e}")
+    little_girl_scream_sound = None
+horror_girl_singing_channel = None # 目前正在播放哼歌音效的聲道，離開事件、進入尖叫階段時要停掉
+horror_girl_scream_channel = None # 目前正在播放尖叫音效的聲道，用來偵測音效是否播完
 current_music_key = None # 目前正在播放的音樂鍵值，None 表示沒有音樂在播
 
 
@@ -489,6 +504,23 @@ except pygame.error as e:
     print("請確認 '行李架細節.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用黑色背景作為替代。")
     luggage_rack_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入晚上打開手電筒後遇到小女孩的恐怖事件圖片，做法跟其他特寫畫面一樣：等比例縮放，不拉伸變形
+try:
+    horror_girl_img = load_height_locked_image('horror_girl.png')
+except pygame.error as e:
+    print(f"無法載入圖片 'horror_girl.png': {e}")
+    print("請確認 'horror_girl.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    horror_girl_img = None # 如果圖片載入失敗，設定為 None
+
+try:
+    horror_girl_smile_img = load_height_locked_image('horror_girl_smile.png')
+except pygame.error as e:
+    print(f"無法載入圖片 'horror_girl_smile.png': {e}")
+    print("請確認 'horror_girl_smile.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    horror_girl_smile_img = None # 如果圖片載入失敗，設定為 None
 
 # 載入「第X天白天／晚上」的標題卡圖片（毛筆手寫字、透明背景），切換天數／時段時會疊在畫面上短暫顯示
 DAY_TITLE_CARD_WIDTH = 500
@@ -1081,6 +1113,17 @@ girl_dialogue = [
 # 已經拿到畫之後，再找她說話會改播這段（不會重複給畫）
 girl_dialogue_repeat = [
     ("小女孩", "……"),
+]
+
+# 晚上打開手電筒後在小女孩座位遇到她，觸發的恐怖事件：先是對話，
+# 接著畫面切成她的笑臉、播放尖叫音效，音效播完才出現最後一句反應台詞
+horror_girl_talk_lines = [
+    ("小女孩", "……"),
+    ("我", "怎麼了嗎?妳還好嗎?"),
+    ("小女孩", "大哥哥，要不要一起玩，嘻嘻"),
+]
+horror_girl_react_lines = [
+    ("我", "「哇啊啊啊啊!!!!!!!!!」"),
 ]
 
 # --- 老維修員 NPC（第二天白天起才會出現，用 old_engineer.png 取代車廂三的第三張椅子，圖片本身已經包含椅子）---
@@ -2392,6 +2435,7 @@ def reset_game():
     global has_guide, has_girl_painting, has_talked_to_old_lady, active_npc, manual_view
     global dialogue_lines, dialogue_index, game_over_reason, intro_monologue_shown
     global console_box_screws, console_box_unlocked, screw_removal_anim, current_luggage_rack_key
+    global horror_girl_singing_channel, horror_girl_scream_channel
 
     conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - CONDUCTOR_SIZE - 10
     conductor_rect.y = HEIGHT - FLOOR_HEIGHT - CONDUCTOR_SIZE + CONDUCTOR_Y_OFFSET
@@ -2428,6 +2472,11 @@ def reset_game():
     console_box_unlocked = False
     screw_removal_anim = None
     current_luggage_rack_key = None
+
+    if horror_girl_singing_channel:
+        horror_girl_singing_channel.stop()
+    horror_girl_singing_channel = None
+    horror_girl_scream_channel = None
 
 
 def draw_conductor(surface, rect, image, camera_offset_x):
@@ -2488,7 +2537,7 @@ def try_interact(click_pos=None):
     """檢查角色目前是否在某個可互動範圍內，是的話就觸發對應的互動
     （NPC對話、撿道具、開櫃子、開門、切換場景等）。按 F 鍵或滑鼠左鍵都會呼叫這個函式；
     click_pos 是滑鼠左鍵點擊當下的邏輯座標（按 F 鍵觸發時沒有點擊位置，傳入 None）。"""
-    global dialogue_lines, dialogue_index, active_npc, game_state, current_luggage_rack_key
+    global dialogue_lines, dialogue_index, active_npc, game_state, current_luggage_rack_key, horror_girl_singing_channel
 
     matched_rack_index = None
     if not lights_out and current_scene in LUGGAGE_RACK_SCENES:
@@ -2518,6 +2567,13 @@ def try_interact(click_pos=None):
         dialogue_index = 0
         active_npc = 'GIRL'
         game_state = 'DIALOGUE'
+    elif lights_out and flashlight_on and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_interact_rect):
+        # 晚上打開手電筒後在小女孩座位遇到她，觸發恐怖事件
+        if horror_girl_singing_sound:
+            horror_girl_singing_channel = horror_girl_singing_sound.play(loops=-1)
+        dialogue_lines = horror_girl_talk_lines
+        dialogue_index = 0
+        game_state = 'HORROR_GIRL_TALK'
     elif not lights_out and current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX and conductor_rect.colliderect(old_worker_interact_rect):
         # 與老維修員互動，開始對話
         dialogue_lines = build_old_worker_dialogue()
@@ -2906,6 +2962,69 @@ while running:
         if game_state == 'DIALOGUE':
             draw_dialogue_box()
         draw_inventory_hint()
+
+    elif game_state == 'HORROR_GIRL_TALK':
+        # --- 恐怖事件第一階段：小女孩開口說話，畫面換成 horror_girl.png ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            advance_dialogue = (
+                (event.type == pygame.KEYDOWN and event.key in (pygame.K_f, pygame.K_SPACE)) or
+                (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1)
+            )
+            if advance_dialogue:
+                dialogue_index += 1
+                if dialogue_index >= len(dialogue_lines):
+                    # 對話講完，停掉哼歌音效，換成笑臉、播放尖叫音效
+                    if horror_girl_singing_channel:
+                        horror_girl_singing_channel.stop()
+                        horror_girl_singing_channel = None
+                    if little_girl_scream_sound:
+                        horror_girl_scream_channel = little_girl_scream_sound.play()
+                    else:
+                        horror_girl_scream_channel = None
+                    game_state = 'HORROR_GIRL_SCREAM'
+
+        screen.fill(BLACK)
+        if horror_girl_img:
+            screen.blit(horror_girl_img, ((WIDTH - horror_girl_img.get_width()) // 2, 0))
+        if game_state == 'HORROR_GIRL_TALK':
+            draw_dialogue_box()
+
+    elif game_state == 'HORROR_GIRL_SCREAM':
+        # --- 恐怖事件第二階段：笑臉 + 尖叫音效，音效播完才會進入下一階段（不顯示對話框）---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+        screen.fill(BLACK)
+        if horror_girl_smile_img:
+            screen.blit(horror_girl_smile_img, ((WIDTH - horror_girl_smile_img.get_width()) // 2, 0))
+
+        if not horror_girl_scream_channel or not horror_girl_scream_channel.get_busy():
+            dialogue_lines = horror_girl_react_lines
+            dialogue_index = 0
+            game_state = 'HORROR_GIRL_REACT'
+
+    elif game_state == 'HORROR_GIRL_REACT':
+        # --- 恐怖事件第三階段：尖叫音效播完後，主角驚叫的反應台詞，結束後切回原本拿著手電筒的畫面 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            advance_dialogue = (
+                (event.type == pygame.KEYDOWN and event.key in (pygame.K_f, pygame.K_SPACE)) or
+                (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1)
+            )
+            if advance_dialogue:
+                dialogue_index += 1
+                if dialogue_index >= len(dialogue_lines):
+                    game_state = 'PLAYING'
+
+        screen.fill(BLACK)
+        if horror_girl_smile_img:
+            screen.blit(horror_girl_smile_img, ((WIDTH - horror_girl_smile_img.get_width()) // 2, 0))
+        if game_state == 'HORROR_GIRL_REACT':
+            draw_dialogue_box()
 
     elif game_state == 'NIGHT1_CHOICE':
         # --- 第一天晚上「開門／不開門」選擇畫面的事件與繪圖 ---
