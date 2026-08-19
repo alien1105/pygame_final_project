@@ -1,6 +1,7 @@
 import pygame
 import sys
 import os
+import math
 
 # 1. 遊戲初始化
 pygame.init()
@@ -480,6 +481,15 @@ except pygame.error as e:
     print("將改用黑色背景作為替代。")
     tooltable_img = None # 如果圖片載入失敗，設定為 None
 
+# 載入行李架特寫圖片（點選行李架後顯示的畫面），做法跟廁所一樣：等比例縮放，不拉伸變形
+try:
+    luggage_rack_img = load_height_locked_image('行李架細節.png')
+except pygame.error as e:
+    print(f"無法載入圖片 '行李架細節.png': {e}")
+    print("請確認 '行李架細節.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    luggage_rack_img = None # 如果圖片載入失敗，設定為 None
+
 # 載入「第X天白天／晚上」的標題卡圖片（毛筆手寫字、透明背景），切換天數／時段時會疊在畫面上短暫顯示
 DAY_TITLE_CARD_WIDTH = 500
 day_title_images = {}
@@ -526,6 +536,15 @@ except pygame.error as e:
     print("請確認 'operator_day_unlocked.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用鎖著的操作台圖片作為替代。")
     operator_day_unlocked_img = operator_day_locked_img # 解鎖圖片載入失敗時，退回鎖著的圖片
+
+# 晚上聚焦操作台時改用這張圖片，不分鎖著／解鎖（劇情進行到晚上時置物櫃早就已經解鎖過了）
+try:
+    operator_night_img = load_height_locked_image('operator_night.png')
+except pygame.error as e:
+    print(f"無法載入圖片 'operator_night.png': {e}")
+    print("請確認 'operator_night.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用白天的操作台圖片作為替代。")
+    operator_night_img = operator_day_unlocked_img # 載入失敗時，退回白天的操作台圖片
 
 # 載入置物櫃門特寫圖片（點擊操作台右下角的櫃門後顯示），做法一樣：等比例縮放、置中顯示。鎖著／解鎖分別對應 box_locked.png、box_unlocked.png
 try:
@@ -665,6 +684,22 @@ def load_item_icon(filename, max_size):
     return pygame.transform.smoothscale(icon_img, (icon_w, icon_h))
 
 
+def load_glow_icon(filename, max_size, alpha_threshold=20):
+    """載入像 spot.png 這種邊緣有一大圈極淡漸層（但透明度不是真正的 0）的發光圖示。
+    用透明度門檻先抓出肉眼看得到的範圍再裁切，不然 load_item_icon 那種抓非 0 像素的裁切法
+    會整張圖幾乎都裁不掉，等比例縮小後光點會小到只剩幾個像素、幾乎看不見。"""
+    icon_pil = PILImage.open(asset_path(filename)).convert('RGBA')
+    mask = icon_pil.split()[3].point(lambda a: 255 if a > alpha_threshold else 0)
+    bbox = mask.getbbox()
+    if bbox:
+        icon_pil = icon_pil.crop(bbox)
+    icon_img = pygame.image.frombuffer(icon_pil.tobytes(), icon_pil.size, 'RGBA').convert_alpha()
+    scale = min(max_size / icon_img.get_width(), max_size / icon_img.get_height())
+    icon_w = max(1, round(icon_img.get_width() * scale))
+    icon_h = max(1, round(icon_img.get_height() * scale))
+    return pygame.transform.smoothscale(icon_img, (icon_w, icon_h))
+
+
 # 道具圖示：鍵是道具名稱，值是縮放好的圖片，載入失敗的道具會保持原本的色塊顯示
 ITEM_ICONS = {}
 for _icon_item_name, _icon_filename, _icon_max_size in [
@@ -672,10 +707,11 @@ for _icon_item_name, _icon_filename, _icon_max_size in [
     ('車站鑰匙', 'station_key.png', 110),
     ('維修員留下的螺絲起子', 'screwdriver.png', 110),
     ('工具間鑰匙', 'toolroom_key.png', 110),
-    ('舊車票', 'old_ticket.png', 24),
+    ('舊車票', 'old_ticket.png', 110), # 現在放在行李架特寫畫面裡，圖示要跟其他特寫道具一樣大
     ('舊路線圖', 'old_route_map.png', 24),
     ('舊報紙', 'old_news.png', 24),
-    ('車站員工日誌', '員工日誌.png', 24),
+    ('車站員工日誌', '員工日誌.png', 110), # 現在放在駕駛室櫃子特寫畫面裡，圖示要跟其他特寫道具一樣大
+
     ('小女孩的畫', 'paint.png', 110),
     ('《夜間行駛生存指南》', '生存指南.png', 110),
 ]:
@@ -703,6 +739,13 @@ try:
 except Exception as e:
     print(f"無法載入道具圖示 'rose.png': {e}")
     box_screw_icon = None
+
+# 可互動物品上方的發光標記（取代原本角色頭上顯示的「F : 互動」文字提示）
+try:
+    interact_spot_icon = load_glow_icon('spot.png', 40)
+except Exception as e:
+    print(f"無法載入道具圖示 'spot.png': {e}")
+    interact_spot_icon = None
 
 # 依照背景圖片裡窗戶的實際位置，計算白天座椅要擺放的世界座標（每張背景圖裡的每扇窗戶前都放一張椅子）
 chair_day_positions = []
@@ -1159,18 +1202,6 @@ def show_day_title_card(stage_name):
 item_spots = [
     {
         'scene': 'CARRIAGE_1',
-        'rect': pygame.Rect(840, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 60, DOOR_HEIGHT), # 車廂座位上
-        'items': ['舊車票'],
-        'collected': False,
-    },
-    {
-        'scene': 'CARRIAGE_1',
-        'rect': pygame.Rect(1030, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 60, DOOR_HEIGHT), # 舊車票右邊的座位上
-        'items': ['車站鑰匙'],
-        'collected': False,
-    },
-    {
-        'scene': 'CARRIAGE_1',
         'rect': pygame.Rect(650, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 60, DOOR_HEIGHT), # 車廂座位上
         'items': ['舊報紙'],
         'collected': False,
@@ -1180,18 +1211,24 @@ item_spots = [
             ("旁白", "事故地點：青木站附近。"),
         ],
     },
-    {
-        'scene': 'COCKPIT',
-        'rect': pygame.Rect(340, HEIGHT - FLOOR_HEIGHT - DOOR_HEIGHT, 60, DOOR_HEIGHT), # 駕駛室角落
-        'items': ['車站員工日誌'],
-        'collected': False,
-        'requires_item': '舊路線圖', # 要先跟老維修員拿到舊路線圖，日誌才會出現在駕駛室
-        'reveal_lines': [
-            ("旁白", "員工日誌最後一筆寫著："),
-            ("旁白", "「00:17，青木站再次亮燈。」"),
-        ],
-    },
 ]
+
+# 員工日誌改成放在駕駛室櫃子裡（跟老式手電筒、工具間鑰匙一樣），不再是地上的道具點：
+# 第二天、且已經跟老維修員拿到舊路線圖之後，才會出現在櫃子裡
+STAFF_LOG_ITEM_NAME = '車站員工日誌'
+STAFF_LOG_MIN_DAY_INDEX = 2 # DAY_NIGHT_STAGES 中 'DAY2_DAY' 的索引
+staff_log_case_pos = (394, 350) # 櫃子內部特寫畫面裡道具擺放的位置（下層層板，扳手和鎖之間的空位）
+staff_log_case_rect = pygame.Rect(0, 0, 60, 60)
+staff_log_case_rect.center = staff_log_case_pos
+STAFF_LOG_REVEAL_LINES = [
+    ("旁白", "員工日誌最後一筆寫著："),
+    ("旁白", "「00:17，青木站再次亮燈。」"),
+]
+
+
+def staff_log_available():
+    """判斷員工日誌目前是否符合出現在櫃子裡的條件：第二天、且已經拿到舊路線圖"""
+    return day_night_index >= STAFF_LOG_MIN_DAY_INDEX and '舊路線圖' in inventory
 
 
 def item_spot_available(spot):
@@ -1280,6 +1317,29 @@ SCREWDRIVER_TABLE_ITEM_NAME = '維修員留下的螺絲起子'
 screwdriver_table_pos = (279, 188) # 螺絲起子特寫畫面裡道具擺放的位置（等比例縮放後的位置）
 screwdriver_table_rect = pygame.Rect(0, 0, 90, 90) # 圖示放大1.5倍（60->90），互動範圍跟著放大
 screwdriver_table_rect.center = screwdriver_table_pos
+
+# --- 每節車廂的行李架（點選後看特寫，按 F 離開；故意不加進 draw_interact_hint，不會顯示發光提示，要玩家自己發現）---
+# 車廂背景是同一張圖片拼貼兩次組成，每一塊拼貼圖片裡左右各有一個行李架，
+# 所以每節車廂總共有 4 個行李架，且每節車廂的排列方式都一樣，共用同一組世界座標範圍。
+LUGGAGE_RACK_SCENES = ['CARRIAGE_1', 'CARRIAGE_2', 'CARRIAGE_3', 'CARRIAGE_4']
+LUGGAGE_RACK_LOCAL_RANGES = [(15, 234), (730, 1030)] # 拼貼圖片裡左、右兩側行李架的範圍（等比例縮放後的座標）
+luggage_rack_interact_rects = []
+for _rack_tile_index in range(TRAIN_DAY_TILE_COUNT):
+    for _rack_x1, _rack_x2 in LUGGAGE_RACK_LOCAL_RANGES:
+        _rack_world_x1 = _rack_tile_index * train_day_tile_step + _rack_x1
+        _rack_world_x2 = _rack_tile_index * train_day_tile_step + _rack_x2
+        luggage_rack_interact_rects.append(pygame.Rect(_rack_world_x1, 0, _rack_world_x2 - _rack_world_x1, 200))
+
+# 特定車廂的特定行李架上藏著道具，要進入該行李架的特寫畫面才看得到、才能撿。
+# key 是 (場景, 第幾個行李架的索引)，索引從 0 開始（0 是該車廂第 1 個行李架）
+LUGGAGE_RACK_ITEMS = {
+    ('CARRIAGE_1', 1): '舊車票', # 第一節車廂第 2 個行李架
+    ('CARRIAGE_2', 2): '車站鑰匙', # 第二節車廂第 3 個行李架
+}
+luggage_rack_item_pos = (270, 255) # 行李架特寫畫面裡道具擺放的位置（層架上）
+luggage_rack_item_rect = pygame.Rect(0, 0, 70, 70)
+luggage_rack_item_rect.center = luggage_rack_item_pos
+current_luggage_rack_key = None # 目前正在看的是哪一個行李架：(場景, 索引)；不在行李架特寫畫面時是 None
 
 
 def draw_hover_glow(rect, mouse_pos, color=(255, 240, 150)):
@@ -1778,10 +1838,13 @@ def draw_item_spots(camera_offset_x):
 
 
 def draw_console_focus():
-    """繪製操作台細節畫面（operator_day_locked.png／operator_day_unlocked.png），
+    """繪製操作台細節畫面（operator_day_locked.png／operator_day_unlocked.png／operator_night.png），
     可以點擊右下角櫃門聚焦看櫃門特寫"""
     screen.fill(BLACK)
-    bg_img = operator_day_unlocked_img if console_box_unlocked else operator_day_locked_img
+    if not is_daytime():
+        bg_img = operator_night_img
+    else:
+        bg_img = operator_day_unlocked_img if console_box_unlocked else operator_day_locked_img
     if bg_img:
         screen.blit(bg_img, ((WIDTH - bg_img.get_width()) // 2, 0))
 
@@ -1852,6 +1915,28 @@ def draw_toilet_view():
     draw_bottom_f_hint("F : 離開廁所")
 
 
+def draw_luggage_rack_view():
+    """繪製點選行李架後看到的特寫畫面；如果這個行李架上藏著還沒撿的道具就顯示出來，
+    底部顯示按 F 離開的提示"""
+    if luggage_rack_img:
+        screen.blit(luggage_rack_img, ((WIDTH - luggage_rack_img.get_width()) // 2, 0))
+    else:
+        screen.fill(BLACK)
+
+    item_name = LUGGAGE_RACK_ITEMS.get(current_luggage_rack_key)
+    if item_name and item_name not in inventory:
+        mouse_pos = to_logical_pos(pygame.mouse.get_pos())
+        draw_hover_glow(luggage_rack_item_rect, mouse_pos)
+        icon = ITEM_ICONS.get(item_name)
+        if icon:
+            screen.blit(icon, icon.get_rect(center=luggage_rack_item_pos))
+        else:
+            pygame.draw.rect(screen, GOLD, luggage_rack_item_rect)
+            pygame.draw.rect(screen, BLACK, luggage_rack_item_rect, 2)
+
+    draw_bottom_f_hint("F : 離開")
+
+
 def draw_toolroom_view():
     """繪製走進工具間後看到的畫面，可以用滑鼠點工作桌看特寫，底部顯示按 F 離開的提示"""
     if toolroom_img:
@@ -1884,7 +1969,8 @@ def draw_tooltable_view():
 
 def draw_case_view():
     """繪製駕駛室櫃子內部的特寫畫面（置中顯示、左右保留黑邊），
-    櫃子裡如果還沒被拿走就顯示老式手電筒、工具間鑰匙，底部顯示按 F 離開的提示"""
+    櫃子裡如果還沒被拿走就顯示老式手電筒、工具間鑰匙，第二天拿到舊路線圖後還會出現員工日誌，
+    底部顯示按 F 離開的提示"""
     screen.fill(BLACK)
     if case_img:
         screen.blit(case_img, ((WIDTH - case_img.get_width()) // 2, 0))
@@ -1903,6 +1989,15 @@ def draw_case_view():
         else:
             pygame.draw.rect(screen, GOLD, fallback_rect)
             pygame.draw.rect(screen, BLACK, fallback_rect, 2)
+
+    if STAFF_LOG_ITEM_NAME not in inventory and staff_log_available():
+        draw_hover_glow(staff_log_case_rect, mouse_pos)
+        icon = ITEM_ICONS.get(STAFF_LOG_ITEM_NAME)
+        if icon:
+            screen.blit(icon, icon.get_rect(center=staff_log_case_pos))
+        else:
+            pygame.draw.rect(screen, GOLD, staff_log_case_rect)
+            pygame.draw.rect(screen, BLACK, staff_log_case_rect, 2)
 
     draw_bottom_f_hint("F : 離開櫃子")
 
@@ -2296,7 +2391,7 @@ def reset_game():
     global flashlight_on, facing_direction
     global has_guide, has_girl_painting, has_talked_to_old_lady, active_npc, manual_view
     global dialogue_lines, dialogue_index, game_over_reason, intro_monologue_shown
-    global console_box_screws, console_box_unlocked, screw_removal_anim
+    global console_box_screws, console_box_unlocked, screw_removal_anim, current_luggage_rack_key
 
     conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - CONDUCTOR_SIZE - 10
     conductor_rect.y = HEIGHT - FLOOR_HEIGHT - CONDUCTOR_SIZE + CONDUCTOR_Y_OFFSET
@@ -2332,6 +2427,7 @@ def reset_game():
     console_box_screws = [True, True, True, True]
     console_box_unlocked = False
     screw_removal_anim = None
+    current_luggage_rack_key = None
 
 
 def draw_conductor(surface, rect, image, camera_offset_x):
@@ -2345,8 +2441,9 @@ def draw_conductor(surface, rect, image, camera_offset_x):
         pygame.draw.rect(surface, BLUE, screen_rect)
 
 def draw_interact_hint(camera_offset_x):
-    """如果玩家靠近可互動的 NPC 或物件，在角色上方顯示按 F 互動的提示。
-    車廂之間的門已經改成直接走過去就會穿越，不用按 F，所以不會顯示在這裡。
+    """角色靠近可互動的 NPC／物件（走進它的互動範圍）時，在該物件上方疊一個發光的
+    pictures/spot.png 標記（會呼吸般忽亮忽暗），取代原本顯示在角色頭上的「F : 互動」文字提示。
+    車廂之間的門已經改成直接走過去就會穿越，不用按 F，所以不會標記在這裡。
     燈光熄滅期間完全不顯示互動提示（連 NPC、物件都不能互動）"""
     interactables = []
     if not lights_out:
@@ -2368,24 +2465,48 @@ def draw_interact_hint(camera_offset_x):
         if current_scene == TOOLROOM_SCENE:
             interactables.append(toolroom_interact_rect)
 
+    interactables = [rect for rect in interactables if conductor_rect.colliderect(rect)] # 只保留角色目前站在範圍內的
+
+    if not interactables or not interact_spot_icon:
+        return
+
+    # 用 sin 波在 0~1 之間來回擺動，做出光點忽大忽亮、忽小忽暗的呼吸發光動畫
+    pulse = (math.sin(pygame.time.get_ticks() / 260.0) + 1) / 2
+    scale = 0.8 + 0.35 * pulse
+    glow_icon = pygame.transform.smoothscale(
+        interact_spot_icon,
+        (max(1, round(interact_spot_icon.get_width() * scale)), max(1, round(interact_spot_icon.get_height() * scale)))
+    )
+    glow_icon.set_alpha(round(150 + 105 * pulse))
+
     for target_rect in interactables:
-        if conductor_rect.colliderect(target_rect):
-            hint_surf = font_small.render("F : 互動", True, WHITE)
-            hint_bg = pygame.Surface((hint_surf.get_width() + 16, hint_surf.get_height() + 10), pygame.SRCALPHA)
-            hint_bg.fill((0, 0, 0, 180))
-            hint_bg.blit(hint_surf, (8, 5))
-            screen_x = conductor_rect.centerx - camera_offset_x - hint_bg.get_width() // 2
-            screen_y = conductor_rect.top - hint_bg.get_height() - 10
-            screen.blit(hint_bg, (screen_x, screen_y))
-            break
+        marker_pos = (target_rect.centerx - camera_offset_x, target_rect.centery)
+        screen.blit(glow_icon, glow_icon.get_rect(center=marker_pos))
 
 
-def try_interact():
+def try_interact(click_pos=None):
     """檢查角色目前是否在某個可互動範圍內，是的話就觸發對應的互動
-    （NPC對話、撿道具、開櫃子、開門、切換場景等）。按 F 鍵或滑鼠左鍵都會呼叫這個函式。"""
-    global dialogue_lines, dialogue_index, active_npc, game_state
+    （NPC對話、撿道具、開櫃子、開門、切換場景等）。按 F 鍵或滑鼠左鍵都會呼叫這個函式；
+    click_pos 是滑鼠左鍵點擊當下的邏輯座標（按 F 鍵觸發時沒有點擊位置，傳入 None）。"""
+    global dialogue_lines, dialogue_index, active_npc, game_state, current_luggage_rack_key
 
-    if not lights_out and current_scene == OLD_LADY_SCENE and is_daytime() and conductor_rect.colliderect(old_lady_interact_rect):
+    matched_rack_index = None
+    if not lights_out and current_scene in LUGGAGE_RACK_SCENES:
+        for _rack_idx, _rack_rect in enumerate(luggage_rack_interact_rects):
+            if conductor_rect.colliderect(_rack_rect):
+                matched_rack_index = _rack_idx
+                break
+    rack_in_range = matched_rack_index is not None
+    # 行李架範圍常常跟旁邊的道具、NPC 重疊：滑鼠點擊時，只有點在畫面上方大概 1/3 的範圍才算點到行李架，
+    # 下面 2/3 留給旁邊的道具、NPC 互動；按 F 鍵沒有點擊位置可以判斷，站在範圍內就直接優先看行李架
+    if rack_in_range and click_pos is not None and click_pos[1] >= HEIGHT / 3:
+        rack_in_range = False
+
+    if rack_in_range:
+        # 點選行李架看特寫（故意不顯示發光提示，讓玩家自己發現）
+        current_luggage_rack_key = (current_scene, matched_rack_index)
+        game_state = 'LUGGAGE_RACK_VIEW'
+    elif not lights_out and current_scene == OLD_LADY_SCENE and is_daytime() and conductor_rect.colliderect(old_lady_interact_rect):
         # 與老太太互動，開始對話（聊過一次之後改播重複對話）
         dialogue_lines = old_lady_dialogue_repeat if has_talked_to_old_lady else old_lady_dialogue
         dialogue_index = 0
@@ -2412,8 +2533,7 @@ def try_interact():
         pickup_line = (" ", f"獲得了「{ '、'.join(item_spot['items']) }」。")
         dialogue_lines = item_spot.get('reveal_lines', []) + [pickup_line]
         dialogue_index = 0
-        # 拿到車站員工日誌後要接著切到第二天晚上，其餘道具照舊撿完直接回到遊戲
-        active_npc = 'STAFF_LOG_PICKUP' if '車站員工日誌' in item_spot['items'] else None
+        active_npc = None
         game_state = 'DIALOGUE'
     elif not lights_out and current_scene == CONSOLE_FOCUS_SCENE and conductor_rect.colliderect(console_cabinet_rect):
         # 聚焦查看操作台置物櫃細節
@@ -2549,7 +2669,7 @@ while running:
                 if event.key == pygame.K_f:
                     try_interact()
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                try_interact()
+                try_interact(to_logical_pos(event.pos))
         # B. 遊戲邏輯
         current_world_width = get_scene_width(current_scene)
 
@@ -2934,6 +3054,23 @@ while running:
 
         draw_toilet_view()
 
+    elif game_state == 'LUGGAGE_RACK_VIEW':
+        # --- 行李架特寫畫面的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_f or event.key == pygame.K_ESCAPE:
+                    game_state = 'PLAYING'
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_pos = to_logical_pos(event.pos)
+                rack_item_name = LUGGAGE_RACK_ITEMS.get(current_luggage_rack_key)
+                if rack_item_name and rack_item_name not in inventory and luggage_rack_item_rect.collidepoint(mouse_pos):
+                    inventory.append(rack_item_name)
+                    show_item_popup(rack_item_name)
+
+        draw_luggage_rack_view()
+
     elif game_state == 'CASE_VIEW':
         # --- 駕駛室櫃子內部畫面的事件與繪圖 ---
         for event in pygame.event.get():
@@ -2950,6 +3087,15 @@ while running:
                 elif TOOLROOM_KEY_ITEM_NAME not in inventory and toolroom_key_case_rect.collidepoint(mouse_pos):
                     inventory.append(TOOLROOM_KEY_ITEM_NAME)
                     show_item_popup(TOOLROOM_KEY_ITEM_NAME)
+                elif (STAFF_LOG_ITEM_NAME not in inventory and staff_log_available()
+                      and staff_log_case_rect.collidepoint(mouse_pos)):
+                    inventory.append(STAFF_LOG_ITEM_NAME)
+                    show_item_popup(STAFF_LOG_ITEM_NAME)
+                    pickup_line = (" ", f"獲得了「{STAFF_LOG_ITEM_NAME}」。")
+                    dialogue_lines = STAFF_LOG_REVEAL_LINES + [pickup_line]
+                    dialogue_index = 0
+                    active_npc = 'STAFF_LOG_PICKUP' # 對話結束後會直接切到第二天晚上（見 DIALOGUE 狀態的處理）
+                    game_state = 'DIALOGUE'
 
         draw_case_view()
 
