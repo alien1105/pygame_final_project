@@ -775,6 +775,18 @@ for _marker_item_name, _marker_icon in ITEM_ICONS.items():
     else:
         ITEM_MARKER_ICONS[_marker_item_name] = _marker_icon
 
+# 背包畫面每一列前面的小圖示，做法跟 ITEM_MARKER_ICONS 一樣，只是縮放到適合列表列高的大小
+INVENTORY_ROW_ICON_MAX_SIZE = 36
+INVENTORY_ROW_ICONS = {}
+for _row_item_name, _row_icon in ITEM_ICONS.items():
+    _row_scale = min(1.0, INVENTORY_ROW_ICON_MAX_SIZE / _row_icon.get_width(), INVENTORY_ROW_ICON_MAX_SIZE / _row_icon.get_height())
+    if _row_scale < 1.0:
+        _row_w = max(1, round(_row_icon.get_width() * _row_scale))
+        _row_h = max(1, round(_row_icon.get_height() * _row_scale))
+        INVENTORY_ROW_ICONS[_row_item_name] = pygame.transform.smoothscale(_row_icon, (_row_w, _row_h))
+    else:
+        INVENTORY_ROW_ICONS[_row_item_name] = _row_icon
+
 # 置物櫃門的四個孔洞上蓋著的螺絲圖示，要用螺絲起子點擊轉開才會消失
 try:
     box_screw_icon = load_item_icon('rose.png', 28)
@@ -1248,6 +1260,7 @@ guide_rules = [
 
 # --- 第一天白天可收集道具 ---
 inventory = [] # 玩家背包，存放已取得的道具名稱
+inventory_scroll_offset = 0 # 背包畫面目前捲動到第幾列（用滾輪捲動），0 表示從最上面開始顯示
 
 # --- 獲得道具時跳出的提示（圖案＋文字，過一段時間自動消失）---
 ITEM_POPUP_DURATION = 2400 # 顯示的總毫秒數（含淡出）
@@ -1865,8 +1878,14 @@ def draw_old_worker(camera_offset_x):
         pygame.draw.circle(screen, WORKER_COLOR, (screen_rect.centerx, screen_rect.top - 15), 15) # 頭部
 
 
+INVENTORY_ROW_HEIGHT = 42 # 背包每一列（圖示＋名稱）的高度
+
+
 def draw_inventory_screen():
-    """繪製背包畫面，列出已拾取的道具"""
+    """繪製背包畫面：由上至下列出已拾取的道具，每一列左邊是圖示、右邊是名稱，
+    超出可視範圍時可以用滑鼠滾輪捲動查看"""
+    global inventory_scroll_offset
+
     # 半透明背景
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 180))
@@ -1881,13 +1900,33 @@ def draw_inventory_screen():
     title_surf = font.render("背包", True, BLACK)
     screen.blit(title_surf, (panel_rect.centerx - title_surf.get_width() // 2, panel_rect.y + 20))
 
+    list_rect = pygame.Rect(panel_rect.x + 30, panel_rect.y + 65, panel_rect.width - 60, panel_rect.height - 115)
+    visible_rows = max(1, list_rect.height // INVENTORY_ROW_HEIGHT)
+    max_scroll = max(0, len(inventory) - visible_rows)
+    inventory_scroll_offset = max(0, min(inventory_scroll_offset, max_scroll))
+
     if inventory:
-        for i, item_name in enumerate(inventory):
-            item_surf = font_small.render(f"・{item_name}", True, BLACK)
-            screen.blit(item_surf, (panel_rect.x + 40, panel_rect.y + 70 + i * 32))
+        prev_clip = screen.get_clip()
+        screen.set_clip(list_rect)
+        for i, item_name in enumerate(inventory[inventory_scroll_offset:inventory_scroll_offset + visible_rows]):
+            row_y = list_rect.y + i * INVENTORY_ROW_HEIGHT
+            icon = INVENTORY_ROW_ICONS.get(item_name)
+            if icon:
+                screen.blit(icon, icon.get_rect(midleft=(list_rect.x + INVENTORY_ROW_ICON_MAX_SIZE // 2, row_y + INVENTORY_ROW_HEIGHT // 2)))
+            name_surf = font_small.render(item_name, True, BLACK)
+            screen.blit(name_surf, (list_rect.x + INVENTORY_ROW_ICON_MAX_SIZE + 16, row_y + (INVENTORY_ROW_HEIGHT - name_surf.get_height()) // 2))
+        screen.set_clip(prev_clip)
+
+        # 道具超過可視範圍時，畫一條細細的捲軸提示還有更多內容
+        if max_scroll > 0:
+            track_rect = pygame.Rect(list_rect.right + 6, list_rect.y, 6, list_rect.height)
+            pygame.draw.rect(screen, GRAY, track_rect, border_radius=3)
+            thumb_height = max(20, round(track_rect.height * visible_rows / len(inventory)))
+            thumb_y = track_rect.y + round((track_rect.height - thumb_height) * inventory_scroll_offset / max_scroll)
+            pygame.draw.rect(screen, DARK_GRAY, pygame.Rect(track_rect.x, thumb_y, track_rect.width, thumb_height), border_radius=3)
     else:
         empty_surf = font_small.render("目前沒有任何道具。", True, DARK_GRAY)
-        screen.blit(empty_surf, (panel_rect.x + 40, panel_rect.y + 70))
+        screen.blit(empty_surf, (list_rect.x, list_rect.y))
 
     hint_surf = font_small.render("B : 關閉背包", True, DARK_GRAY)
     screen.blit(hint_surf, (panel_rect.right - hint_surf.get_width() - 20, panel_rect.bottom - hint_surf.get_height() - 15))
@@ -2753,6 +2792,7 @@ while running:
                 if event.key == pygame.K_TAB or event.key == pygame.K_SPACE:
                     game_state = 'MANUAL'
                 if event.key == pygame.K_b:
+                    inventory_scroll_offset = 0
                     game_state = 'INVENTORY'
                 if event.key == pygame.K_l and '老式手電筒' in inventory:
                     flashlight_on = not flashlight_on
@@ -3141,6 +3181,8 @@ while running:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_b or event.key == pygame.K_TAB:
                     game_state = 'PLAYING'
+            if event.type == pygame.MOUSEWHEEL:
+                inventory_scroll_offset -= event.y # 滾輪往上（event.y>0）捲動列表往上看，往下同理
 
         draw_background(camera_x)
         draw_old_lady(camera_x)
