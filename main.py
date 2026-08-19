@@ -522,6 +522,16 @@ except pygame.error as e:
     print("將改用黑色背景作為替代。")
     horror_girl_smile_img = None # 如果圖片載入失敗，設定為 None
 
+# 載入第二天晚上「不存在的月台」劇情裡穿插的月台照片，做法跟其他特寫畫面一樣：等比例縮放，不拉伸變形
+night2_station_images = {}
+for _station_index in range(1, 6):
+    _station_filename = f'day2_station{_station_index}.png'
+    try:
+        night2_station_images[_station_index] = load_height_locked_image(_station_filename)
+    except pygame.error as e:
+        print(f"無法載入圖片 '{_station_filename}': {e}")
+        night2_station_images[_station_index] = None
+
 # 載入「第X天白天／晚上」的標題卡圖片（毛筆手寫字、透明背景），切換天數／時段時會疊在畫面上短暫顯示
 DAY_TITLE_CARD_WIDTH = 500
 day_title_images = {}
@@ -983,6 +993,27 @@ night2_lines_open_door = [ # 選擇「開門」後的劇情——違反規則四
     ("旁白", "月台上所有人同時轉過頭，直直地看向你。"),
     ("旁白", "沒有人說話，但他們開始，一步一步地朝列車走來。"),
 ]
+
+
+def get_night2_station_image():
+    """第二天晚上「不存在的月台」劇情裡，特定幾句台詞背景要換成月台照片，不是原本的車廂場景。
+    煞車／不煞車兩種開場過渡劇情長度不同，所以用「跟 night2_platform_lines 接在一起」這件事
+    反推月台照片要從第幾句開始出現，而不是寫死固定的索引。"""
+    if active_npc == 'NIGHT2_PLATFORM':
+        platform_start = len(dialogue_lines) - len(night2_platform_lines)
+        if dialogue_index >= platform_start:
+            return night2_station_images.get(1)
+    elif active_npc == 'NIGHT2_SAFE':
+        if dialogue_index == 0:
+            return night2_station_images.get(2)
+        elif dialogue_index == 1:
+            return night2_station_images.get(3)
+        elif dialogue_index == 2:
+            return night2_station_images.get(4)
+        elif dialogue_index >= 3:
+            return night2_station_images.get(5)
+    return None
+
 
 # --- 通用選擇畫面（可重複用來詢問「A / B」二選一）---
 choice_prompt = ""
@@ -2951,14 +2982,19 @@ while running:
                         active_npc = None
                         game_state = 'PLAYING'
 
-        draw_background(camera_x)
-        draw_old_lady(camera_x)
-        draw_girl(camera_x)
-        draw_old_worker(camera_x)
-        draw_item_spots(camera_x)
-        draw_conductor(screen, conductor_rect, conductor_img, camera_x)
-        draw_night_overlay()
-        draw_lights_out_overlay(camera_x)
+        station_img = get_night2_station_image()
+        if station_img:
+            screen.fill(BLACK)
+            screen.blit(station_img, ((WIDTH - station_img.get_width()) // 2, 0))
+        else:
+            draw_background(camera_x)
+            draw_old_lady(camera_x)
+            draw_girl(camera_x)
+            draw_old_worker(camera_x)
+            draw_item_spots(camera_x)
+            draw_conductor(screen, conductor_rect, conductor_img, camera_x)
+            draw_night_overlay()
+            draw_lights_out_overlay(camera_x)
         if game_state == 'DIALOGUE':
             draw_dialogue_box()
         draw_inventory_hint()
