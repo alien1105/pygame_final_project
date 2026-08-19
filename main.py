@@ -1241,6 +1241,9 @@ for _screw_pos in console_box_screw_positions:
 console_box_screws = [True, True, True, True] # True 表示該孔洞的螺絲還在，尚未被轉開
 console_box_unlocked = False # 四顆螺絲都被轉開後才會變 True，畫面換成 box_unlocked.png
 
+SCREW_REMOVAL_DURATION = 500 # 點擊螺絲後，先原地旋轉這麼多毫秒製造拆除的效果，時間到才真的移除
+screw_removal_anim = None # 目前正在被轉開的螺絲：{'index': 第幾顆, 'start_time': 開始旋轉的時間}；沒有就是 None
+
 # 櫃門解鎖後，裡面的《夜間行駛生存指南》擺放的位置（等比例縮放後的位置）
 console_box_guide_pos = (463, 275)
 console_box_guide_rect = pygame.Rect(0, 0, 70, 70)
@@ -1798,11 +1801,17 @@ def draw_box_view():
         if box_locked_img:
             screen.blit(box_locked_img, ((WIDTH - box_locked_img.get_width()) // 2, 0))
         has_screwdriver = SCREWDRIVER_TABLE_ITEM_NAME in inventory
-        for screw_pos, screw_present, screw_rect in zip(console_box_screw_positions, console_box_screws, console_box_screw_rects):
-            if screw_present and has_screwdriver:
+        for i, (screw_pos, screw_present, screw_rect) in enumerate(zip(console_box_screw_positions, console_box_screws, console_box_screw_rects)):
+            is_removing = screw_removal_anim is not None and screw_removal_anim['index'] == i
+            if screw_present and has_screwdriver and not is_removing:
                 draw_hover_glow(screw_rect, mouse_pos)
             if screw_present and box_screw_icon:
-                screen.blit(box_screw_icon, box_screw_icon.get_rect(center=screw_pos))
+                icon = box_screw_icon
+                if is_removing:
+                    elapsed = pygame.time.get_ticks() - screw_removal_anim['start_time']
+                    angle = (min(elapsed, SCREW_REMOVAL_DURATION) / SCREW_REMOVAL_DURATION) * 720 # 快速轉兩圈，製造轉開螺絲的感覺
+                    icon = pygame.transform.rotate(box_screw_icon, angle)
+                screen.blit(icon, icon.get_rect(center=screw_pos))
         if has_screwdriver:
             hint_text = "點擊螺絲用起子轉開・F : 離開"
         else:
@@ -2287,7 +2296,7 @@ def reset_game():
     global flashlight_on, facing_direction
     global has_guide, has_girl_painting, has_talked_to_old_lady, active_npc, manual_view
     global dialogue_lines, dialogue_index, game_over_reason, intro_monologue_shown
-    global console_box_screws, console_box_unlocked
+    global console_box_screws, console_box_unlocked, screw_removal_anim
 
     conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - CONDUCTOR_SIZE - 10
     conductor_rect.y = HEIGHT - FLOOR_HEIGHT - CONDUCTOR_SIZE + CONDUCTOR_Y_OFFSET
@@ -2322,6 +2331,7 @@ def reset_game():
 
     console_box_screws = [True, True, True, True]
     console_box_unlocked = False
+    screw_removal_anim = None
 
 
 def draw_conductor(surface, rect, image, camera_offset_x):
@@ -2889,12 +2899,10 @@ while running:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_pos = to_logical_pos(event.pos)
                 if not console_box_unlocked:
-                    if SCREWDRIVER_TABLE_ITEM_NAME in inventory:
+                    if SCREWDRIVER_TABLE_ITEM_NAME in inventory and screw_removal_anim is None:
                         for i, screw_rect in enumerate(console_box_screw_rects):
                             if console_box_screws[i] and screw_rect.collidepoint(mouse_pos):
-                                console_box_screws[i] = False
-                                if not any(console_box_screws):
-                                    console_box_unlocked = True
+                                screw_removal_anim = {'index': i, 'start_time': pygame.time.get_ticks()}
                                 break
                 elif not has_guide and console_box_guide_rect.collidepoint(mouse_pos):
                     has_guide = True # 生存指南不放進背包，改成按 TAB 查看
@@ -2905,6 +2913,13 @@ while running:
                     day_night_index = DAY_NIGHT_STAGES.index('DAY1_NIGHT')
                     day1_night_triggered = True
                     night1_pending_intro = True
+
+        if screw_removal_anim is not None and pygame.time.get_ticks() - screw_removal_anim['start_time'] >= SCREW_REMOVAL_DURATION:
+            # 旋轉效果播完，真的把這顆螺絲移除；四顆都轉開後解鎖置物櫃
+            console_box_screws[screw_removal_anim['index']] = False
+            screw_removal_anim = None
+            if not any(console_box_screws):
+                console_box_unlocked = True
 
         draw_box_view()
 
