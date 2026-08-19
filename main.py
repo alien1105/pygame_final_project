@@ -79,10 +79,17 @@ GOLD = (218, 165, 32) # 可拾取道具標記顏色
 TAPE_COLOR = (222, 184, 135) # 封住暗格的膠帶顏色
 NIGHT_OVERLAY_COLOR = (10, 10, 40, 140) # 夜晚時疊加的半透明深藍色
 
-# 載入字型 (使用電腦內建的中文字型)
-font = pygame.font.SysFont("microsoftjhenghei", 28)
-font_small = pygame.font.SysFont("microsoftjhenghei", 20)
-font_title = pygame.font.SysFont("microsoftjhenghei", 64)
+# 載入字型（全部統一改用 ThePeakFontBeta_V0_102.ttf 這套字型）
+try:
+    font = pygame.font.Font('ThePeakFontBeta_V0_102.ttf', 28)
+    font_small = pygame.font.Font('ThePeakFontBeta_V0_102.ttf', 20)
+    font_title = pygame.font.Font('ThePeakFontBeta_V0_102.ttf', 64)
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入字型 'ThePeakFontBeta_V0_102.ttf': {e}")
+    print("將改用電腦內建的中文字型作為替代。")
+    font = pygame.font.SysFont("microsoftjhenghei", 28)
+    font_small = pygame.font.SysFont("microsoftjhenghei", 20)
+    font_title = pygame.font.SysFont("microsoftjhenghei", 64)
 
 # 手寫風格字型，專門給操作手冊／生存指南畫面使用，其他地方仍用上面的一般字型
 try:
@@ -93,6 +100,16 @@ except (pygame.error, FileNotFoundError) as e:
     print("操作手冊／生存指南將改用一般字型作為替代。")
     font_handwriting = font
     font_handwriting_small = font_small
+
+# 對話框也改用同一套手寫字型，字級比手冊小一點，跟縮小後的對話框搭配
+try:
+    font_dialogue = pygame.font.Font('ThePeakFontBeta_V0_102.ttf', 20)
+    font_dialogue_small = pygame.font.Font('ThePeakFontBeta_V0_102.ttf', 15)
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入字型 'ThePeakFontBeta_V0_102.ttf': {e}")
+    print("對話框將改用一般字型作為替代。")
+    font_dialogue = font
+    font_dialogue_small = font_small
 
 # 3. 載入並設定列車長（走路動畫）
 CONDUCTOR_WALK_CROP = (713, 74, 1261, 1054) # main_character_walk2.gif 裡角色的裁切範圍 (left, top, right, bottom)，貼齊腳底，避免角色浮空
@@ -376,6 +393,22 @@ except pygame.error as e:
     print("請確認 'tooltable.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用黑色背景作為替代。")
     tooltable_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入「第X天白天／晚上」的標題卡圖片（毛筆手寫字、透明背景），切換天數／時段時會疊在畫面上短暫顯示
+DAY_TITLE_CARD_WIDTH = 500
+day_title_images = {}
+for _day_stage_name, _day_stage_filename in [
+    ('DAY1_DAY', 'day1_day.png'),
+    ('DAY1_NIGHT', 'day1_night.png'),
+    ('DAY2_DAY', 'day2_day.png'),
+    ('DAY2_NIGHT', 'day2_night.png'),
+]:
+    try:
+        _day_img_original = pygame.image.load(asset_path(_day_stage_filename)).convert_alpha()
+        _day_img_height = round(DAY_TITLE_CARD_WIDTH * _day_img_original.get_height() / _day_img_original.get_width())
+        day_title_images[_day_stage_name] = pygame.transform.smoothscale(_day_img_original, (DAY_TITLE_CARD_WIDTH, _day_img_height))
+    except pygame.error as e:
+        print(f"無法載入圖片 '{_day_stage_filename}': {e}")
 
 # 載入駕駛室櫃子內部圖片。這張圖片比例接近正方形，跟畫面的長寬比差很多，
 # 直接拉伸蓋滿整個畫面會變形得很明顯，所以改成維持原始比例縮放到蓋滿畫面高度、置中顯示，
@@ -702,8 +735,8 @@ conductor_anim_index = 0 # 目前播放到走路動畫的第幾格
 conductor_anim_timer = 0 # 累積經過的毫秒數，用來判斷何時切換下一格
 
 night1_intro_lines = [
-    ("主角", "上班第一天就快要結束了，巡視完列車就可以下班了。"),
-    ("旁白", "主角起身，準備開始夜班的第一次巡視。"),
+    ("我", "上班第一天就快要結束了，巡視完列車就可以下班了。"),
+    ("旁白", "我起身，準備開始夜班的第一次巡視。"),
 ]
 
 night1_blackout_lines = [ # 走到第五節車廂、且持有手電筒時播放，播完後任務改成「打開手電筒」
@@ -725,7 +758,7 @@ night1_lines_no_flashlight = [ # 走到第五節車廂時沒有手電筒，直�
 night1_lines_closed = [ # 選擇「不開門」後的劇情
     ("旁白", "你沒有開門。幾秒後，敲門聲停止了。"),
     ("旁白", "列車離開隧道，燈恢復正常。"),
-    ("旁白", "主角看向監視器，發現最後一節車廂多了一個人。"),
+    ("旁白", "我看向監視器，發現最後一節車廂多了一個人。"),
     ("旁白", "白天看到的乘客名單明明只有五人，現在卻變成六人。"),
     ("旁白", "畫裡的第六個人，就是現在出現的人。"),
     ("旁白", "第一天，結束。"),
@@ -844,14 +877,14 @@ doors = build_doors() # 定義每個場景的互動門
 
 # --- 開場自白：玩家第一次關閉操作手冊後，主角的自言自語 ---
 intro_monologue_lines = [
-    ("主角", "今天是我上任的第一天，心情有點緊張啊……"),
-    ("主角", "自從三年前父親失蹤之後，我便努力的考上鐵路車長這個職位"),
-    ("主角", "只因為對於父親無故失蹤，鐵路公司給出的回答是"),
-    ("主角", "「陳啟明於三年前因精神狀況不佳離職。」"),
-    ("主角", "陳啟明是我的父親"),
-    ("主角", "我不相信……父親不可能就這樣無故消失……"),
-    ("主角", "所以三年後"),
-    ("主角", "我在這裡，決定把真相找出來……"),
+    ("我", "今天是我上任的第一天，心情有點緊張啊……"),
+    ("我", "自從三年前父親失蹤之後，我便努力的考上鐵路車長這個職位"),
+    ("我", "只因為對於父親無故失蹤，鐵路公司給出的回答是"),
+    ("我", "「陳啟明於三年前因精神狀況不佳離職。」"),
+    ("我", "陳啟明是我的父親"),
+    ("我", "我不相信……父親不可能就這樣無故消失……"),
+    ("我", "所以三年後"),
+    ("我", "我在這裡，決定把真相找出來……"),
 ]
 intro_monologue_shown = False # 是否已經播放過開場自白，避免之後重新打開手冊、關閉時又重播一次
 
@@ -871,9 +904,9 @@ old_lady_interact_rect.midbottom = old_lady_rect.midbottom
 # 老太太第一天的對話劇情，格式為 (說話者, 台詞)
 old_lady_dialogue = [
     ("老太太", "新人？"),
-    ("主角", "是。"),
+    ("我", "是。"),
     ("老太太", "那你晚上可別回頭。"),
-    ("主角", "回頭？"),
+    ("我", "回頭？"),
     ("老太太", "……"), # 她卻像沒說過這句話一樣
 ]
 
@@ -900,10 +933,10 @@ girl_interact_rect.midbottom = girl_rect.midbottom
 # 小女孩第一天的對話劇情
 girl_dialogue = [
     ("小女孩", "……"),
-    ("主角", "你在畫什麼？"),
+    ("我", "你在畫什麼？"),
     ("小女孩", "火車。"),
-    ("主角", "（她把畫轉向你，畫裡的火車旁畫了六個人。）"),
-    ("主角", "這班車明明只有五個人……可以給我看看這張畫嗎？"),
+    ("我", "（她把畫轉向你，畫裡的火車旁畫了六個人。）"),
+    ("我", "這班車明明只有五個人……可以給我看看這張畫嗎？"),
     ("小女孩", "……嗯。"),
     (" ", "從小女孩手中拿到了「小女孩的畫」。"),
 ]
@@ -931,17 +964,17 @@ WORKER_COLOR = (90, 110, 90) # 圖片載入失敗時，老維修員改用暗綠�
 
 # 老維修員第二天白天的對話：主線內容
 old_worker_dialogue_intro = [
-    ("主角", "欸，你知道昨晚到底發生了什麼事嗎？"),
+    ("我", "欸，你知道昨晚到底發生了什麼事嗎？"),
     ("老維修員", "……那種事，還是別多問比較好。"),
-    ("主角", "可是我真的看到了什麼。"),
+    ("我", "可是我真的看到了什麼。"),
     ("老維修員", "如果你晚上看見第七站，別停。"),
-    ("主角", "第七站？這條路線不是只有六個車站嗎？"),
+    ("我", "第七站？這條路線不是只有六個車站嗎？"),
     ("老維修員", "……以前，是有第七站的。"),
 ]
 
 # 若玩家持有第一天拿到的舊路線圖，會多出這段揭露「青木站」的內容
 old_worker_dialogue_map_reveal = [
-    ("主角", "（我想起背包裡的舊路線圖……）"),
+    ("我", "（我想起背包裡的舊路線圖……）"),
     ("旁白", "你翻出舊路線圖，發現上面有一個被塗黑的車站——「青木站」。"),
     ("旁白", "但現在的官方路線圖上，根本沒有這個地方。"),
 ]
@@ -965,7 +998,7 @@ SPEAKER_COLORS = {
     "老太太": RED,
     "小女孩": PINK,
     "老維修員": WORKER_COLOR,
-    "主角": BLUE,
+    "我": BLUE,
     "旁白": DARK_GRAY,
 }
 
@@ -1015,6 +1048,18 @@ def show_item_popup(item_name):
     """觸發「獲得道具」的提示，顯示道具圖案（有的話）跟名稱"""
     global item_popup
     item_popup = {'name': item_name, 'start_time': pygame.time.get_ticks()}
+
+
+# --- 切換天數／白天晚上時，疊在畫面上短暫顯示的標題卡（毛筆字「第X天白天／晚上」）---
+DAY_TITLE_CARD_DURATION = 2600 # 顯示的總毫秒數（含淡入淡出）
+DAY_TITLE_CARD_FADE = 500 # 開頭淡入、結尾淡出各佔的毫秒數
+day_title_card = None # None 表示目前沒有要顯示的標題卡；有的話是 {'stage': 階段名稱, 'start_time': 開始顯示的時間}
+
+
+def show_day_title_card(stage_name):
+    """觸發「第X天白天／晚上」的標題卡"""
+    global day_title_card
+    day_title_card = {'stage': stage_name, 'start_time': pygame.time.get_ticks()}
 
 # 每個道具點的位置定義：所在場景、可互動範圍、內含道具、是否已被拾取
 item_spots = [
@@ -1795,6 +1840,42 @@ def draw_item_popup():
     screen.blit(card, card_rect)
 
 
+def draw_day_title_card():
+    """如果剛切換天數／白天晚上，畫出「第X天白天／晚上」的毛筆字標題卡，淡入顯示一段時間後淡出消失"""
+    global day_title_card
+    if day_title_card is None:
+        return
+    elapsed = pygame.time.get_ticks() - day_title_card['start_time']
+    if elapsed >= DAY_TITLE_CARD_DURATION:
+        day_title_card = None
+        return
+
+    if elapsed < DAY_TITLE_CARD_FADE:
+        alpha = round(255 * elapsed / DAY_TITLE_CARD_FADE)
+    elif elapsed > DAY_TITLE_CARD_DURATION - DAY_TITLE_CARD_FADE:
+        alpha = round(255 * (DAY_TITLE_CARD_DURATION - elapsed) / DAY_TITLE_CARD_FADE)
+    else:
+        alpha = 255
+
+    # 白天版的圖片是黑色毛筆字，要用亮色背景才看得清楚；晚上版是白色毛筆字，要用暗色背景
+    is_night_stage = day_title_card['stage'].endswith('NIGHT')
+    overlay_color = (0, 0, 0) if is_night_stage else (245, 240, 225)
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((*overlay_color, round(140 * alpha / 255)))
+    screen.blit(overlay, (0, 0))
+
+    img = day_title_images.get(day_title_card['stage'])
+    if img:
+        img_copy = img.copy()
+        img_copy.set_alpha(alpha)
+        screen.blit(img_copy, img_copy.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
+    else:
+        text_color = WHITE if is_night_stage else BLACK
+        label_surf = font.render(DAY_NIGHT_LABELS.get(day_title_card['stage'], ''), True, text_color)
+        label_surf.set_alpha(alpha)
+        screen.blit(label_surf, label_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
+
+
 def draw_inventory_hint():
     """在左上角顯示目前背包內的道具數量"""
     hint_text_surf = font_small.render(f"背包 : {len(inventory)}", True, WHITE)
@@ -1913,27 +1994,27 @@ def wrap_text(text, render_font, max_width):
 
 
 def draw_dialogue_box():
-    """繪製對話框，顯示目前這句台詞（超過文字框寬度會自動換行）"""
+    """繪製對話框（縮小成一半大小、圓角、手寫字體），顯示目前這句台詞（超過文字框寬度會自動換行）"""
     speaker, text = dialogue_lines[dialogue_index]
 
     box_width = WIDTH - 120
-    line_height = 32
-    lines = wrap_text(text, font, box_width - 40)
-    box_height = max(100, 55 + len(lines) * line_height + 15)
+    line_height = 22
+    lines = wrap_text(text, font_dialogue, box_width - 28)
+    box_height = max(60, 34 + len(lines) * line_height + 10)
     box_rect = pygame.Rect(60, HEIGHT - 40 - box_height, box_width, box_height)
 
-    pygame.draw.rect(screen, WHITE, box_rect)
-    pygame.draw.rect(screen, BLACK, box_rect, 3)
+    pygame.draw.rect(screen, WHITE, box_rect, border_radius=16)
+    pygame.draw.rect(screen, BLACK, box_rect, 2, border_radius=16)
 
-    name_surf = font_small.render(speaker, True, SPEAKER_COLORS.get(speaker, BLACK))
-    screen.blit(name_surf, (box_rect.x + 20, box_rect.y + 12))
+    name_surf = font_dialogue_small.render(speaker, True, SPEAKER_COLORS.get(speaker, BLACK))
+    screen.blit(name_surf, (box_rect.x + 14, box_rect.y + 8))
 
     for i, line in enumerate(lines):
-        line_surf = font.render(line, True, BLACK)
-        screen.blit(line_surf, (box_rect.x + 20, box_rect.y + 45 + i * line_height))
+        line_surf = font_dialogue.render(line, True, BLACK)
+        screen.blit(line_surf, (box_rect.x + 14, box_rect.y + 30 + i * line_height))
 
-    hint_surf = font_small.render("F : 繼續", True, DARK_GRAY)
-    screen.blit(hint_surf, (box_rect.right - hint_surf.get_width() - 15, box_rect.bottom - hint_surf.get_height() - 10))
+    hint_surf = font_dialogue_small.render("F : 繼續", True, DARK_GRAY)
+    screen.blit(hint_surf, (box_rect.right - hint_surf.get_width() - 10, box_rect.bottom - hint_surf.get_height() - 6))
 
 
 def draw_night1_choice():
@@ -2404,12 +2485,14 @@ while running:
                             # 拿到車站員工日誌後，直接切到第二天晚上並播放晚上的開場劇情
                             day_night_index = DAY_NIGHT_STAGES.index('DAY2_NIGHT')
                             day2_night_triggered = True
+                            show_day_title_card('DAY2_NIGHT')
                             dialogue_lines = night2_intro_lines
                             dialogue_index = 0
                             active_npc = 'NIGHT2_INTRO'
                             game_state = 'DIALOGUE'
                         elif active_npc == 'NIGHT1_INTRO':
                             active_npc = None
+                            show_day_title_card('DAY1_NIGHT')
                             # 任務指引改成巡視車廂，走到第五節車廂前燈光都還是正常的
                             night1_patrol_active = True
                             game_state = 'PLAYING'
@@ -2427,6 +2510,7 @@ while running:
                             active_npc = None
                             day1_night_resolved = True
                             day_night_index = DAY_NIGHT_STAGES.index('DAY2_DAY') # 劇情結束後直接跳到第二天白天
+                            show_day_title_card('DAY2_DAY')
                             game_state = 'PLAYING'
                         elif active_npc == 'NIGHT1_CAUGHT':
                             active_npc = None
@@ -2456,6 +2540,7 @@ while running:
                         elif active_npc == 'INTRO':
                             active_npc = None
                             game_state = 'PLAYING'
+                            show_day_title_card('DAY1_DAY') # 開場自白結束、正式進入遊戲時顯示「第一天白天」標題卡
                         else:
                             active_npc = None
                             game_state = 'PLAYING'
@@ -2653,8 +2738,9 @@ while running:
 
         draw_tooltable_view()
 
-    # 獲得道具的提示卡片：不管目前在哪個畫面狀態，都疊在最上層顯示，過一段時間自動淡出
+    # 獲得道具的提示卡片、天數切換標題卡：不管目前在哪個畫面狀態，都疊在最上層顯示，過一段時間自動淡出
     draw_item_popup()
+    draw_day_title_card()
 
     # --- D. 更新畫面 ---
     # 把邏輯畫布平滑縮放後貼到全螢幕視窗中央（維持長寬比例，多餘的部分留黑邊）
