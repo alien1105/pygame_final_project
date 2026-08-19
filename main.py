@@ -236,6 +236,27 @@ except pygame.error as e:
     print("將改用文字方塊按鈕作為替代。")
     setting_img = None # 如果圖片載入失敗，設定為 None
 
+# 載入暫停選單的「繼續遊戲」「返回主頁」按鈕圖片（同樣是鐵牌造型），維持原始長寬比例縮放
+try:
+    continue_game_img_original = pygame.image.load(asset_path('continue_game.png')).convert_alpha()
+    continue_game_img_height = round(BUTTON_IMG_WIDTH * continue_game_img_original.get_height() / continue_game_img_original.get_width())
+    continue_game_img = pygame.transform.smoothscale(continue_game_img_original, (BUTTON_IMG_WIDTH, continue_game_img_height))
+except pygame.error as e:
+    print(f"無法載入圖片 'continue_game.png': {e}")
+    print("請確認 'continue_game.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用文字方塊按鈕作為替代。")
+    continue_game_img = None # 如果圖片載入失敗，設定為 None
+
+try:
+    back_home_img_original = pygame.image.load(asset_path('back_home.png')).convert_alpha()
+    back_home_img_height = round(BUTTON_IMG_WIDTH * back_home_img_original.get_height() / back_home_img_original.get_width())
+    back_home_img = pygame.transform.smoothscale(back_home_img_original, (BUTTON_IMG_WIDTH, back_home_img_height))
+except pygame.error as e:
+    print(f"無法載入圖片 'back_home.png': {e}")
+    print("請確認 'back_home.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用文字方塊按鈕作為替代。")
+    back_home_img = None # 如果圖片載入失敗，設定為 None
+
 # 載入操作手冊／生存指南畫面的背景圖片（攤開的筆記本），先裁掉圖片邊緣多餘的透明留白，
 # 再拉伸蓋滿畫面（左側留一小條空間放書籤標籤，不維持原始長寬比例）
 MANUAL_TAB_COLUMN_WIDTH = 150 # 左側留給書籤標籤的寬度
@@ -689,13 +710,22 @@ else:
     exit_button_rect = pygame.Rect(WIDTH // 2 - 95, settings_button_rect.bottom + _start_ui_gap, 190, 55)
 
 # --- 遊戲中按 ESC 跳出的選單（由上到下：繼續遊玩、設定、返回主頁）---
-resume_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 - 70, 200, 55) # 繼續遊玩按鈕
+_pause_ui_top = 140 # 按鈕堆疊區塊的最上緣（「已暫停」標題下方）
+if continue_game_img:
+    resume_button_rect = continue_game_img.get_rect(midtop=(WIDTH // 2, _pause_ui_top))
+else:
+    resume_button_rect = pygame.Rect(WIDTH // 2 - 100, _pause_ui_top, 200, 55) # 繼續遊玩按鈕
+
 if setting_img:
     pause_settings_button_rect = setting_img.get_rect(midtop=(WIDTH // 2, resume_button_rect.bottom + 15))
 else:
     pause_settings_button_rect = pygame.Rect(0, resume_button_rect.bottom + 15, 110, 34)
     pause_settings_button_rect.centerx = WIDTH // 2
-back_to_menu_button_rect = pygame.Rect(WIDTH // 2 - 100, pause_settings_button_rect.bottom + 15, 200, 55) # 返回主頁按鈕
+
+if back_home_img:
+    back_to_menu_button_rect = back_home_img.get_rect(midtop=(WIDTH // 2, pause_settings_button_rect.bottom + 15))
+else:
+    back_to_menu_button_rect = pygame.Rect(WIDTH // 2 - 100, pause_settings_button_rect.bottom + 15, 200, 55) # 返回主頁按鈕
 
 # --- 設定畫面（音量滑桿＋返回按鈕），可以從開始畫面或暫停選單點「設定」進來 ---
 settings_return_state = 'START' # 記錄是從哪個畫面點進設定的，按返回才知道要回哪裡
@@ -1181,7 +1211,7 @@ toolroom_interact_rect.centerx = CONNECTION_WIDTH // 2
 work_table_rect = pygame.Rect(309, 129, 214, 197) # 工具間畫面裡工作桌的範圍，滑鼠點擊用
 SCREWDRIVER_TABLE_ITEM_NAME = '維修員留下的螺絲起子'
 screwdriver_table_pos = (367, 225) # 螺絲起子特寫畫面裡道具擺放的位置
-screwdriver_table_rect = pygame.Rect(0, 0, 60, 60)
+screwdriver_table_rect = pygame.Rect(0, 0, 90, 90) # 圖示放大1.5倍（60->90），互動範圍跟著放大
 screwdriver_table_rect.center = screwdriver_table_pos
 
 
@@ -1299,22 +1329,28 @@ def draw_pause_menu():
     title_surf = font.render("已暫停", True, WHITE)
     screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, HEIGHT // 2 - 110))
 
-    pygame.draw.rect(screen, RED, resume_button_rect)
-    pygame.draw.rect(screen, WHITE, resume_button_rect, 3)
-    resume_text_surf = font.render("繼續遊玩", True, WHITE)
-    screen.blit(resume_text_surf, (resume_button_rect.centerx - resume_text_surf.get_width() // 2,
-                                   resume_button_rect.centery - resume_text_surf.get_height() // 2))
+    if continue_game_img:
+        screen.blit(continue_game_img, resume_button_rect)
+    else:
+        pygame.draw.rect(screen, RED, resume_button_rect)
+        pygame.draw.rect(screen, WHITE, resume_button_rect, 3)
+        resume_text_surf = font.render("繼續遊玩", True, WHITE)
+        screen.blit(resume_text_surf, (resume_button_rect.centerx - resume_text_surf.get_width() // 2,
+                                       resume_button_rect.centery - resume_text_surf.get_height() // 2))
 
     if setting_img:
         screen.blit(setting_img, pause_settings_button_rect)
     else:
         draw_simple_button(pause_settings_button_rect, "設定", DARK_GRAY)
 
-    pygame.draw.rect(screen, DARK_GRAY, back_to_menu_button_rect)
-    pygame.draw.rect(screen, WHITE, back_to_menu_button_rect, 3)
-    back_text_surf = font.render("返回主頁", True, WHITE)
-    screen.blit(back_text_surf, (back_to_menu_button_rect.centerx - back_text_surf.get_width() // 2,
-                                 back_to_menu_button_rect.centery - back_text_surf.get_height() // 2))
+    if back_home_img:
+        screen.blit(back_home_img, back_to_menu_button_rect)
+    else:
+        pygame.draw.rect(screen, DARK_GRAY, back_to_menu_button_rect)
+        pygame.draw.rect(screen, WHITE, back_to_menu_button_rect, 3)
+        back_text_surf = font.render("返回主頁", True, WHITE)
+        screen.blit(back_text_surf, (back_to_menu_button_rect.centerx - back_text_surf.get_width() // 2,
+                                     back_to_menu_button_rect.centery - back_text_surf.get_height() // 2))
 
 
 def draw_settings_screen():
@@ -1760,7 +1796,8 @@ def draw_tooltable_view():
         draw_hover_glow(screwdriver_table_rect, to_logical_pos(pygame.mouse.get_pos()))
         icon = ITEM_ICONS.get(SCREWDRIVER_TABLE_ITEM_NAME)
         if icon:
-            screen.blit(icon, icon.get_rect(center=screwdriver_table_pos))
+            big_icon = pygame.transform.smoothscale(icon, (round(icon.get_width() * 1.5), round(icon.get_height() * 1.5)))
+            screen.blit(big_icon, big_icon.get_rect(center=screwdriver_table_pos))
         else:
             pygame.draw.rect(screen, GOLD, screwdriver_table_rect)
             pygame.draw.rect(screen, BLACK, screwdriver_table_rect, 2)
