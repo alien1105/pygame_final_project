@@ -77,7 +77,7 @@ PURPLE = (150, 100, 150) # 老太太用紫色方塊代表
 PINK = (230, 160, 190) # 小女孩用粉色方塊代表
 GOLD = (218, 165, 32) # 可拾取道具標記顏色
 TAPE_COLOR = (222, 184, 135) # 封住暗格的膠帶顏色
-NIGHT_OVERLAY_COLOR = (10, 10, 40, 140) # 夜晚時疊加的半透明深藍色
+NIGHT_OVERLAY_COLOR = (10, 10, 40, 95) # 夜晚時疊加的半透明深藍色（調亮一點，原本是140）
 
 # 載入字型（全部統一改用 ThePeakFontBeta_V0_102.ttf 這套字型）
 try:
@@ -2253,13 +2253,11 @@ def draw_conductor(surface, rect, image, camera_offset_x):
         pygame.draw.rect(surface, BLUE, screen_rect)
 
 def draw_interact_hint(camera_offset_x):
-    """如果玩家靠近可互動的門或 NPC，在角色上方顯示按 F 互動的提示。
-    燈光熄滅期間完全不顯示互動提示；就算手電筒打開了，也只顯示車廂門的提示（其他都不能互動）"""
-    scene_doors = doors.get(current_scene, {})
-    interactables = list(scene_doors.values())
-    if lights_out and not flashlight_on:
-        interactables = []
-    elif not lights_out:
+    """如果玩家靠近可互動的 NPC 或物件，在角色上方顯示按 F 互動的提示。
+    車廂之間的門已經改成直接走過去就會穿越，不用按 F，所以不會顯示在這裡。
+    燈光熄滅期間完全不顯示互動提示（連 NPC、物件都不能互動）"""
+    interactables = []
+    if not lights_out:
         if current_scene == OLD_LADY_SCENE and is_daytime():
             interactables.append(old_lady_interact_rect)
         if current_scene == GIRL_SCENE:
@@ -2293,7 +2291,7 @@ def draw_interact_hint(camera_offset_x):
 def try_interact():
     """檢查角色目前是否在某個可互動範圍內，是的話就觸發對應的互動
     （NPC對話、撿道具、開櫃子、開門、切換場景等）。按 F 鍵或滑鼠左鍵都會呼叫這個函式。"""
-    global dialogue_lines, dialogue_index, active_npc, game_state, current_scene
+    global dialogue_lines, dialogue_index, active_npc, game_state
 
     if not lights_out and current_scene == OLD_LADY_SCENE and is_daytime() and conductor_rect.colliderect(old_lady_interact_rect):
         # 與老太太互動，開始對話（聊過一次之後改播重複對話）
@@ -2344,20 +2342,9 @@ def try_interact():
             active_npc = None
             game_state = 'DIALOGUE'
     elif lights_out and not flashlight_on:
-        # 燈光熄滅、手電筒還沒打開時，完全無法互動（包含開門），也不顯示任何提示
+        # 燈光熄滅、手電筒還沒打開時，完全無法互動，也不顯示任何提示
         pass
-    else:
-        # 場景切換邏輯：依 SCENE_ORDER 自動判斷要往前一節還是下一節場景移動
-        scene_doors = doors.get(current_scene, {})
-        scene_index = SCENE_ORDER.index(current_scene)
-        if 'prev' in scene_doors and conductor_rect.colliderect(scene_doors['prev']):
-            prev_scene = SCENE_ORDER[scene_index - 1]
-            current_scene = prev_scene
-            conductor_rect.x = doors[prev_scene]['next'].left - conductor_rect.width - 10
-        elif 'next' in scene_doors and conductor_rect.colliderect(scene_doors['next']):
-            next_scene = SCENE_ORDER[scene_index + 1]
-            current_scene = next_scene
-            conductor_rect.x = doors[next_scene]['prev'].right + 10
+    # 車廂之間已經改成直接走過去就會自動切換場景（見遊戲邏輯區塊），不需要再按 F／點擊開門
 
 
 # 4. 遊戲主迴圈
@@ -2485,11 +2472,30 @@ while running:
             facing_direction = 'RIGHT'
             is_moving = True
 
-        # 用角色實際可見的範圍（扣掉畫布左右透明留白）判斷邊界，避免走到車廂盡頭時還有一大段空氣牆
-        if conductor_rect.left + CONDUCTOR_VISIBLE_PAD < 0:
-            conductor_rect.left = -CONDUCTOR_VISIBLE_PAD
-        if conductor_rect.right - CONDUCTOR_VISIBLE_PAD > current_world_width:
-            conductor_rect.right = current_world_width + CONDUCTOR_VISIBLE_PAD
+        # 車廂之間直接穿越，不用開門：角色走到門的範圍就自動切換到下一個／上一個場景；
+        # 沒有門的地方（例如頭尾車廂的盡頭）維持原本的邊界限制，用角色實際可見的範圍
+        # （扣掉畫布左右透明留白）判斷，避免走到盡頭時還有一大段空氣牆
+        scene_doors = doors.get(current_scene, {})
+        scene_index = SCENE_ORDER.index(current_scene)
+        crossed_scene = False
+        if 'prev' in scene_doors and conductor_rect.colliderect(scene_doors['prev']):
+            prev_scene = SCENE_ORDER[scene_index - 1]
+            current_scene = prev_scene
+            conductor_rect.x = doors[prev_scene]['next'].left - conductor_rect.width - 10
+            current_world_width = get_scene_width(current_scene)
+            crossed_scene = True
+        elif 'next' in scene_doors and conductor_rect.colliderect(scene_doors['next']):
+            next_scene = SCENE_ORDER[scene_index + 1]
+            current_scene = next_scene
+            conductor_rect.x = doors[next_scene]['prev'].right + 10
+            current_world_width = get_scene_width(current_scene)
+            crossed_scene = True
+
+        if not crossed_scene:
+            if 'prev' not in scene_doors and conductor_rect.left + CONDUCTOR_VISIBLE_PAD < 0:
+                conductor_rect.left = -CONDUCTOR_VISIBLE_PAD
+            if 'next' not in scene_doors and conductor_rect.right - CONDUCTOR_VISIBLE_PAD > current_world_width:
+                conductor_rect.right = current_world_width + CONDUCTOR_VISIBLE_PAD
 
         # 更新走路動畫（GIF 裡的角色本來就面向左邊，面向右邊時要水平翻轉）
         if conductor_walk_frames:
