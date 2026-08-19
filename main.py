@@ -2577,10 +2577,13 @@ def try_interact(click_pos=None):
                 matched_rack_index = _rack_idx
                 break
     rack_in_range = matched_rack_index is not None
-    # 行李架範圍常常跟旁邊的道具、NPC 重疊：滑鼠點擊時，只有點在畫面上方大概 1/3 的範圍才算點到行李架，
-    # 下面 2/3 留給旁邊的道具、NPC 互動；按 F 鍵沒有點擊位置可以判斷，站在範圍內就直接優先看行李架
-    if rack_in_range and click_pos is not None and click_pos[1] >= HEIGHT / 3:
-        rack_in_range = False
+    # 行李架只能用滑鼠左鍵點擊查看，不能按 F；而且範圍常常跟旁邊的道具、NPC 重疊，
+    # 滑鼠點擊時只有點在畫面上方大概 1/3 的範圍才算點到行李架，下面 2/3 留給旁邊的道具、NPC 互動
+    if rack_in_range:
+        if click_pos is None:
+            rack_in_range = False
+        elif click_pos[1] >= HEIGHT / 3:
+            rack_in_range = False
 
     if rack_in_range:
         # 點選行李架看特寫（故意不顯示發光提示，讓玩家自己發現）
