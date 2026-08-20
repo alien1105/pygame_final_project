@@ -127,6 +127,15 @@ except (pygame.error, FileNotFoundError) as e:
     font_dialogue = font
     font_dialogue_small = font_small
 
+# 工作日誌內文字級更小一點：有幾天的日誌內容偏長，用比手冊內文更小的字級搭配較窄的行距，
+# 才能在頁面高度限制內完整放下，不會被下面的換頁按鈕蓋到
+try:
+    font_work_note = pygame.font.Font('ThePeakFontBeta_V0_102.ttf', 13)
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入字型 'ThePeakFontBeta_V0_102.ttf': {e}")
+    print("工作日誌將改用一般字型作為替代。")
+    font_work_note = font_small
+
 # 3. 載入並設定列車長（走路動畫）
 CONDUCTOR_WALK_CROP = (713, 74, 1261, 1054) # main_character_walk2.gif 裡角色的裁切範圍 (left, top, right, bottom)，貼齊腳底，避免角色浮空
 conductor_walk_frames = []    # 走路動畫的每一張畫格 (pygame Surface)
@@ -486,6 +495,66 @@ except Exception as e:
     print("請確認 '生存指南_內頁.png' 檔案與 main.py 在同一個資料夾中。")
     print("操作手冊／生存指南畫面將改用原本繪製的白色面板作為替代。")
     manual_bg_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入工作日誌頁籤專用的背景圖片，做法跟上面一樣：裁掉透明留白、縮放到跟其他頁籤同樣的大小
+try:
+    work_note_pil = PILImage.open(asset_path('work_note.png')).convert('RGBA')
+    work_note_bbox = work_note_pil.split()[3].getbbox()
+    if work_note_bbox:
+        work_note_pil = work_note_pil.crop(work_note_bbox)
+    work_note_img_original = pygame.image.frombuffer(work_note_pil.tobytes(), work_note_pil.size, 'RGBA').convert_alpha()
+    work_note_img = pygame.transform.smoothscale(work_note_img_original, (MANUAL_BG_WIDTH, MANUAL_BG_HEIGHT))
+except Exception as e:
+    print(f"無法載入圖片 'work_note.png': {e}")
+    print("請確認 'work_note.png' 檔案與 main.py 在同一個資料夾中。")
+    print("工作日誌頁籤將改用跟其他頁籤共用的背景作為替代。")
+    work_note_img = manual_bg_img # 如果圖片載入失敗，退回共用的筆記本背景
+
+
+def load_text_file(filename):
+    """讀取跟 main.py 同一層資料夾裡的純文字檔案內容（工作日誌的每一頁文字），讀不到就回傳空字串"""
+    try:
+        with open(filename, encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        print(f"無法載入文字檔 '{filename}': {e}")
+        return ''
+
+
+# 工作日誌每一天結束時要寫進去的內容，第二天結束時一次寫入兩頁（day2、day2-2）
+WORK_NOTE_DAY1_TEXT = load_text_file('work_note_day1.txt')
+WORK_NOTE_DAY2_TEXT = load_text_file('work_note_day2.txt')
+WORK_NOTE_DAY2_2_TEXT = load_text_file('work_note_day2-2.txt')
+
+
+def load_tab_button_image(filename, target_height):
+    """載入頁籤按鈕圖片，裁掉透明留白，等比例縮放到指定高度，不會拉伸變形"""
+    pil_img = PILImage.open(asset_path(filename)).convert('RGBA')
+    bbox = pil_img.split()[3].getbbox()
+    if bbox:
+        pil_img = pil_img.crop(bbox)
+    img = pygame.image.frombuffer(pil_img.tobytes(), pil_img.size, 'RGBA').convert_alpha()
+    width = round(target_height * img.get_width() / img.get_height())
+    return pygame.transform.smoothscale(img, (width, target_height))
+
+
+# 三個頁籤按鈕圖片（操作手冊／生存指南／工作日誌），取代原本手繪的書籤造型標籤
+MANUAL_TAB_BUTTON_HEIGHT = 48
+try:
+    manual_tab_manual_img = load_tab_button_image('操作手冊_btn.png', MANUAL_TAB_BUTTON_HEIGHT)
+except Exception as e:
+    print(f"無法載入圖片 '操作手冊_btn.png': {e}")
+    manual_tab_manual_img = None
+try:
+    manual_tab_guide_img = load_tab_button_image('生存指南_btn.png', MANUAL_TAB_BUTTON_HEIGHT)
+except Exception as e:
+    print(f"無法載入圖片 '生存指南_btn.png': {e}")
+    manual_tab_guide_img = None
+try:
+    manual_tab_work_note_img = load_tab_button_image('工作日誌_btn.png', MANUAL_TAB_BUTTON_HEIGHT)
+except Exception as e:
+    print(f"無法載入圖片 '工作日誌_btn.png': {e}")
+    manual_tab_work_note_img = None
 
 # 載入白天車廂背景圖片（維持原始長寬比例縮放，不拉伸變形；
 # 車廂用兩張完整的圖片並排組成，車廂寬度改成剛好是圖片寬度的兩倍）
@@ -1413,23 +1482,48 @@ has_girl_painting = False # 是否已從小女孩手中取得畫
 has_guide = False # 是否已取得《夜間行駛生存指南》，取得後可在手冊畫面切換查看
 
 # --- 手冊畫面（背景是攤開的筆記本圖片，靠右塞滿畫面；左側留一排書籤標籤可切換操作手冊／生存指南）---
-manual_view = 'MANUAL' # 目前手冊畫面顯示的頁籤：MANUAL 操作手冊 / GUIDE 生存指南
+manual_view = 'MANUAL' # 目前手冊畫面顯示的頁籤：MANUAL 操作手冊 / GUIDE 生存指南 / WORK_NOTE 工作日誌
+manual_close_transition = None # 手冊關閉時要接續的特殊轉場（例如切到第二天白天、切到未完待續），沒有就是 None，直接回到 PLAYING
+work_note_pages = [] # 工作日誌已經寫入的內容，依序累加；只有這個清單裡的頁面才能翻到
+work_note_current_page = 0 # 工作日誌目前顯示第幾頁（0-based）
 if manual_bg_img:
     manual_panel_rect = manual_bg_img.get_rect()
     manual_panel_rect.topleft = (MANUAL_TAB_COLUMN_WIDTH, (HEIGHT - manual_bg_img.get_height()) // 2)
 else:
     manual_panel_rect = pygame.Rect(MANUAL_TAB_COLUMN_WIDTH, HEIGHT // 2 - 195, 700 - MANUAL_TAB_COLUMN_WIDTH, 390)
 
-# 貼在書本左側、垂直置中的書籤標籤（縱向排列）。刻意疊進書本邊緣幾個像素，
+# 貼在書本左側、垂直置中的頁籤按鈕圖片（縱向排列）。刻意疊進書本邊緣幾個像素，
 # 蓋掉書本圖片縮放後邊緣那條很淡的模糊像素，不然兩者中間會看起來有一條縫。
-MANUAL_TAB_WIDTH = 140
-MANUAL_TAB_HEIGHT = 48
+MANUAL_TAB_WIDTH = 140 # 按鈕圖片載入失敗時的備用寬度
 MANUAL_TAB_GAP = 10
 MANUAL_TAB_OVERLAP = 8
-_manual_tabs_total_height = MANUAL_TAB_HEIGHT * 2 + MANUAL_TAB_GAP
+# 頁籤順序（由上到下）：操作手冊、工作日誌、生存指南
+_manual_tab_widths = [
+    (img.get_width() if img else MANUAL_TAB_WIDTH)
+    for img in (manual_tab_manual_img, manual_tab_work_note_img, manual_tab_guide_img)
+]
+_manual_tabs_total_height = MANUAL_TAB_BUTTON_HEIGHT * 3 + MANUAL_TAB_GAP * 2
 _manual_tabs_top = manual_panel_rect.centery - _manual_tabs_total_height // 2
-manual_tab_manual_rect = pygame.Rect(manual_panel_rect.x - MANUAL_TAB_WIDTH + MANUAL_TAB_OVERLAP, _manual_tabs_top, MANUAL_TAB_WIDTH, MANUAL_TAB_HEIGHT)
-manual_tab_guide_rect = pygame.Rect(manual_panel_rect.x - MANUAL_TAB_WIDTH + MANUAL_TAB_OVERLAP, manual_tab_manual_rect.bottom + MANUAL_TAB_GAP, MANUAL_TAB_WIDTH, MANUAL_TAB_HEIGHT)
+manual_tab_manual_rect = pygame.Rect(manual_panel_rect.x - _manual_tab_widths[0] + MANUAL_TAB_OVERLAP, _manual_tabs_top, _manual_tab_widths[0], MANUAL_TAB_BUTTON_HEIGHT)
+manual_tab_work_note_rect = pygame.Rect(manual_panel_rect.x - _manual_tab_widths[1] + MANUAL_TAB_OVERLAP, manual_tab_manual_rect.bottom + MANUAL_TAB_GAP, _manual_tab_widths[1], MANUAL_TAB_BUTTON_HEIGHT)
+manual_tab_guide_rect = pygame.Rect(manual_panel_rect.x - _manual_tab_widths[2] + MANUAL_TAB_OVERLAP, manual_tab_work_note_rect.bottom + MANUAL_TAB_GAP, _manual_tab_widths[2], MANUAL_TAB_BUTTON_HEIGHT)
+
+# 手冊、生存指南只用左半頁寬度顯示內文（避免文字跨過中間裝訂線延伸到右頁）
+_manual_content_x = manual_panel_rect.x + round(manual_panel_rect.width * 0.10)
+_manual_content_width = round(manual_panel_rect.width * 0.36)
+
+# 工作日誌內文跟操作手冊／生存指南一樣，只用左半頁的寬度：句子長度超過這個寬度（頁面邊緣）
+# 就換到下一行，不會跨過中間裝訂線延伸到右頁；內容太長、換行後超出一頁高度，
+# 就交給 paginate_work_note_text() 自動切成好幾頁，而不是硬把文字塞成跨頁的寬版面
+WORK_NOTE_CONTENT_X = manual_panel_rect.x + round(manual_panel_rect.width * 0.10)
+WORK_NOTE_CONTENT_WIDTH = round(manual_panel_rect.width * 0.36)
+work_note_prev_rect = pygame.Rect(WORK_NOTE_CONTENT_X, manual_panel_rect.bottom - 40, 26, 26)
+work_note_next_rect = pygame.Rect(WORK_NOTE_CONTENT_X + WORK_NOTE_CONTENT_WIDTH - 26, manual_panel_rect.bottom - 40, 26, 26)
+
+# 工作日誌內文的行距，跟一頁能放下的最大高度（超過這個高度就自動換到下一頁，而不是被截斷或擠出頁面）
+WORK_NOTE_LINE_HEIGHT = 14
+WORK_NOTE_TEXT_TOP = manual_panel_rect.y + 58
+WORK_NOTE_MAX_TEXT_HEIGHT = work_note_prev_rect.top - WORK_NOTE_TEXT_TOP - 4
 
 # 《夜間行駛生存指南》第一頁的前三條規則，格式為 (規則標題, 規則內容, 補充說明)
 guide_rules = [
@@ -1807,49 +1901,52 @@ def draw_settings_screen():
     draw_simple_button(settings_back_button_rect, "返回", DARK_GRAY)
 
 
-# 書籤標籤左側（外露那一側）的鋸齒狀撕紙邊緣，固定的一組偏移量，每次畫面都一樣、不會閃爍
-TORN_EDGE_JITTER = [0, -3, 4, -2, 3, -4, 2, 0]
+def draw_image_tab_button(rect, image, active):
+    """畫一個貼在書本左側的頁籤按鈕圖片：選中的頁籤全亮顯示，其餘頁籤稍微變暗，用來區分目前在看哪一頁"""
+    if not image:
+        return
+    if active:
+        screen.blit(image, rect)
+    else:
+        dimmed = image.copy()
+        dimmed.set_alpha(150)
+        screen.blit(dimmed, rect)
 
 
-def draw_bookmark_tab(rect, active, text):
-    """畫一個貼在書本左側的書籤標籤：外側（左邊）是粗糙的撕紙邊緣，內側（右邊）疊進書本裡"""
-    steps = len(TORN_EDGE_JITTER) - 1
-    left_points = []
-    for i, jitter in enumerate(TORN_EDGE_JITTER):
-        y = rect.top + rect.height * i / steps
-        left_points.append((rect.left + jitter, y))
-    points = left_points + [(rect.right, rect.bottom), (rect.right, rect.top)]
-
-    fill_color = (235, 225, 195) if active else (150, 130, 100) # 選中時是米白色書頁色，沒選中時是暗卡其色標籤
-    text_color = BLACK if active else (245, 240, 225)
-    pygame.draw.polygon(screen, fill_color, points)
-    pygame.draw.polygon(screen, BLACK, points, 2)
-    text_surf = font_handwriting_small.render(text, True, text_color)
-    text_x = rect.centerx - text_surf.get_width() // 2
-    text_y = rect.centery - text_surf.get_height() // 2
-    screen.blit(text_surf, (text_x, text_y))
+def draw_page_nav_arrow(rect, direction, enabled):
+    """畫工作日誌的換頁三角形箭頭：direction 是 -1（上一頁、朝左）或 1（下一頁、朝右）；
+    enabled 是 False 時（沒有更多頁面可以翻）畫成灰暗色，看起來不能點"""
+    color = BLACK if enabled else (190, 180, 165) # 頁面本身是米色系，用深／淺對比區分能不能點
+    if direction < 0:
+        points = [(rect.right, rect.top), (rect.right, rect.bottom), (rect.left, rect.centery)]
+    else:
+        points = [(rect.left, rect.top), (rect.left, rect.bottom), (rect.right, rect.centery)]
+    pygame.draw.polygon(screen, color, points)
 
 
 def draw_manual_screen():
-    """繪製手冊畫面，背景是攤開的筆記本圖片，上方兩個頁籤可切換操作手冊／生存指南"""
+    """繪製手冊畫面，背景是攤開的筆記本圖片，上方三個頁籤按鈕可切換操作手冊／生存指南／工作日誌"""
     # 半透明背景
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 180))
     screen.blit(overlay, (0, 0))
 
     panel_rect = manual_panel_rect
-    if manual_bg_img:
-        screen.blit(manual_bg_img, panel_rect)
+    if manual_view == 'WORK_NOTE':
+        page_img = work_note_img
+    else:
+        page_img = manual_bg_img
+    if page_img:
+        screen.blit(page_img, panel_rect)
     else:
         pygame.draw.rect(screen, WHITE, panel_rect)
         pygame.draw.rect(screen, BLACK, panel_rect, 3)
 
-    # 「操作手冊」頁籤（書籤造型）
-    draw_bookmark_tab(manual_tab_manual_rect, manual_view == 'MANUAL', "操作手冊")
-
-    # 「生存指南」頁籤（取得指南後才會出現，書籤造型）
+    # 三個頁籤按鈕：操作手冊、生存指南（取得指南後才會出現）、工作日誌
+    draw_image_tab_button(manual_tab_manual_rect, manual_tab_manual_img, manual_view == 'MANUAL')
+    draw_image_tab_button(manual_tab_work_note_rect, manual_tab_work_note_img, manual_view == 'WORK_NOTE')
     if has_guide:
-        draw_bookmark_tab(manual_tab_guide_rect, manual_view == 'GUIDE', "生存指南")
+        draw_image_tab_button(manual_tab_guide_rect, manual_tab_guide_img, manual_view == 'GUIDE')
 
     # 內容區：只用左半頁的寬度，文字太長就換行，不要跨過中間裝訂線延伸到右頁
     content_x = panel_rect.x + round(panel_rect.width * 0.10)
@@ -1877,6 +1974,32 @@ def draw_manual_screen():
                 rule_y += line_height
 
             rule_y += 8 # 規則之間的間距
+    elif manual_view == 'WORK_NOTE':
+        title_surf = font_handwriting.render("工作日誌", True, BLACK)
+        screen.blit(title_surf, (WORK_NOTE_CONTENT_X, panel_rect.y + 24))
+
+        if work_note_pages:
+            page_text = work_note_pages[work_note_current_page]
+            text_y = WORK_NOTE_TEXT_TOP
+            for raw_line in page_text.split('\n'):
+                if not raw_line.strip():
+                    text_y += WORK_NOTE_LINE_HEIGHT // 2 # 空行縮短間距，做出段落間距的感覺
+                    continue
+                for line in wrap_text(raw_line, font_work_note, WORK_NOTE_CONTENT_WIDTH):
+                    line_surf = font_work_note.render(line, True, BLACK)
+                    screen.blit(line_surf, (WORK_NOTE_CONTENT_X, text_y))
+                    text_y += WORK_NOTE_LINE_HEIGHT
+
+            # 換頁箭頭跟頁碼，只能翻到 work_note_pages 裡已經寫入的頁面
+            draw_page_nav_arrow(work_note_prev_rect, -1, work_note_current_page > 0)
+            draw_page_nav_arrow(work_note_next_rect, 1, work_note_current_page < len(work_note_pages) - 1)
+            page_label_surf = font_handwriting_small.render(
+                f"{work_note_current_page + 1} / {len(work_note_pages)}", True, BLACK)
+            screen.blit(page_label_surf, page_label_surf.get_rect(
+                center=(WORK_NOTE_CONTENT_X + WORK_NOTE_CONTENT_WIDTH // 2, work_note_prev_rect.centery)))
+        else:
+            empty_surf = font_handwriting_small.render("（尚無記錄）", True, DARK_GRAY)
+            screen.blit(empty_surf, (WORK_NOTE_CONTENT_X, panel_rect.y + 66))
     else:
         title_surf = font_handwriting.render("操作手冊", True, BLACK)
         screen.blit(title_surf, (content_x, panel_rect.y + 24))
@@ -2710,6 +2833,34 @@ def wrap_text(text, render_font, max_width):
     return lines
 
 
+def paginate_work_note_text(text):
+    """把一天的工作日誌內容依照目前的字型／行距／頁面可用高度，自動切成好幾頁：
+    累加到超出 WORK_NOTE_MAX_TEXT_HEIGHT 時就切下一頁，而不是讓文字被截斷或擠出頁面範圍。
+    以原始一行（日記裡的一句）當作最小單位，不會拆到一半才換頁；回傳切好的頁面文字列表。"""
+    pages = []
+    current_lines = []
+    current_height = 0
+    for raw_line in text.split('\n'):
+        if not raw_line.strip():
+            entry_lines = ['']
+            entry_height = WORK_NOTE_LINE_HEIGHT // 2
+        else:
+            entry_lines = wrap_text(raw_line, font_work_note, WORK_NOTE_CONTENT_WIDTH)
+            entry_height = WORK_NOTE_LINE_HEIGHT * len(entry_lines)
+
+        if current_lines and current_height + entry_height > WORK_NOTE_MAX_TEXT_HEIGHT:
+            pages.append('\n'.join(current_lines))
+            current_lines = []
+            current_height = 0
+
+        current_lines.extend(entry_lines)
+        current_height += entry_height
+
+    if current_lines:
+        pages.append('\n'.join(current_lines))
+    return pages if pages else ['']
+
+
 def draw_dialogue_box():
     """繪製對話框（縮小成一半大小、圓角、手寫字體），顯示目前這句台詞（超過文字框寬度會自動換行）"""
     speaker, text = dialogue_lines[dialogue_index]
@@ -2832,6 +2983,7 @@ def reset_game():
     global night1_pending_intro, night1_patrol_active
     global flashlight_on, facing_direction
     global has_guide, has_girl_painting, has_talked_to_old_lady, active_npc, manual_view
+    global manual_close_transition, work_note_pages, work_note_current_page
     global dialogue_lines, dialogue_index, game_over_reason, intro_monologue_shown
     global console_box_screws, console_box_unlocked, screw_removal_anim, current_luggage_rack_key
     global horror_girl_singing_channel, horror_girl_scream_channel, horror_girl_event_done
@@ -2862,6 +3014,9 @@ def reset_game():
     intro_monologue_shown = False
     active_npc = None
     manual_view = 'MANUAL'
+    manual_close_transition = None
+    work_note_pages = []
+    work_note_current_page = 0
     dialogue_lines = []
     dialogue_index = 0
 
@@ -3133,7 +3288,18 @@ while running:
                 running = False
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_TAB, pygame.K_SPACE, pygame.K_ESCAPE):
-                    if not intro_monologue_shown:
+                    if manual_close_transition == 'DAY2_DAY':
+                        # 第一天結束、看完工作日誌後關閉手冊，接著切到第二天白天
+                        manual_close_transition = None
+                        day_night_index = DAY_NIGHT_STAGES.index('DAY2_DAY')
+                        show_day_title_card('DAY2_DAY')
+                        game_state = 'PLAYING'
+                    elif manual_close_transition == 'TO_BE_CONTINUED':
+                        # 第二天結束、看完工作日誌後關閉手冊，接著進入「未完待續」畫面
+                        manual_close_transition = None
+                        to_be_continued_start_time = pygame.time.get_ticks()
+                        game_state = 'TO_BE_CONTINUED'
+                    elif not intro_monologue_shown:
                         # 第一次關閉手冊，先播放主角的開場自白，播完才進入遊戲
                         intro_monologue_shown = True
                         dialogue_lines = intro_monologue_lines
@@ -3149,12 +3315,25 @@ while running:
                         game_state = 'DIALOGUE'
                     else:
                         game_state = 'PLAYING'
+                elif manual_view == 'WORK_NOTE' and event.key in (pygame.K_LEFT, pygame.K_a):
+                    if work_note_current_page > 0:
+                        work_note_current_page -= 1
+                elif manual_view == 'WORK_NOTE' and event.key in (pygame.K_RIGHT, pygame.K_d):
+                    if work_note_current_page < len(work_note_pages) - 1:
+                        work_note_current_page += 1
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_pos = to_logical_pos(event.pos)
                 if manual_tab_manual_rect.collidepoint(mouse_pos):
                     manual_view = 'MANUAL'
                 elif has_guide and manual_tab_guide_rect.collidepoint(mouse_pos):
                     manual_view = 'GUIDE'
+                elif manual_tab_work_note_rect.collidepoint(mouse_pos):
+                    manual_view = 'WORK_NOTE'
+                elif manual_view == 'WORK_NOTE' and work_note_prev_rect.collidepoint(mouse_pos) and work_note_current_page > 0:
+                    work_note_current_page -= 1
+                elif (manual_view == 'WORK_NOTE' and work_note_next_rect.collidepoint(mouse_pos)
+                      and work_note_current_page < len(work_note_pages) - 1):
+                    work_note_current_page += 1
 
         # 繪製背景遊戲畫面
         draw_background(camera_x)
@@ -3412,9 +3591,14 @@ while running:
                     elif active_npc == 'NIGHT1_OUTRO':
                         active_npc = None
                         day1_night_resolved = True
-                        day_night_index = DAY_NIGHT_STAGES.index('DAY2_DAY') # 劇情結束後直接跳到第二天白天
-                        show_day_title_card('DAY2_DAY')
-                        game_state = 'PLAYING'
+                        # 第一天結束，把工作日誌第一天的內容寫進去（太長會自動切成好幾頁），
+                        # 跳出手冊停在新寫入的第一頁，關閉手冊後（見 MANUAL 狀態的處理）才接著切到第二天白天
+                        day1_start_page = len(work_note_pages)
+                        work_note_pages.extend(paginate_work_note_text(WORK_NOTE_DAY1_TEXT))
+                        work_note_current_page = day1_start_page
+                        manual_view = 'WORK_NOTE'
+                        manual_close_transition = 'DAY2_DAY'
+                        game_state = 'MANUAL'
                     elif active_npc == 'NIGHT1_CAUGHT':
                         active_npc = None
                         game_over_reason = "你打開了門，被那個「多出來的人」發現了。"
@@ -3435,8 +3619,16 @@ while running:
                         )
                     elif active_npc == 'NIGHT2_SAFE':
                         active_npc = None
-                        to_be_continued_start_time = pygame.time.get_ticks()
-                        game_state = 'TO_BE_CONTINUED'
+                        # 第二天結束：day2、day2-2 其實是同一篇日記（原始照片分成兩張），接在一起
+                        # 當成一整篇內容寫進工作日誌（太長會自動切成好幾頁），跳出手冊停在新寫入的第一頁，
+                        # 關閉手冊後（見 MANUAL 狀態的處理）才接著進入「未完待續」畫面
+                        day2_start_page = len(work_note_pages)
+                        day2_full_text = WORK_NOTE_DAY2_TEXT.rstrip('\n') + '\n' + WORK_NOTE_DAY2_2_TEXT
+                        work_note_pages.extend(paginate_work_note_text(day2_full_text))
+                        work_note_current_page = day2_start_page
+                        manual_view = 'WORK_NOTE'
+                        manual_close_transition = 'TO_BE_CONTINUED'
+                        game_state = 'MANUAL'
                     elif active_npc == 'NIGHT2_CAUGHT':
                         active_npc = None
                         game_over_reason = "你打開了車門，月台上的人朝你走了過來。"
