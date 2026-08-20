@@ -205,7 +205,7 @@ music_active_channel = None # 目前正在播放（前景）的聲道，None 表
 
 # 音效各自的基準音量（在音量滑桿 100% 時的大小），實際播放音量是「基準音量 x 音量滑桿」，
 # 這樣拖動音量滑桿時，背景音樂跟所有音效才會一起變大聲、變小聲
-FOOTSTEP_BASE_VOLUME = 0.35
+FOOTSTEP_BASE_VOLUME = 0.25
 HORROR_SINGING_BASE_VOLUME = 1.0
 HORROR_SCREAM_BASE_VOLUME = 1.0
 
@@ -1025,6 +1025,8 @@ facing_direction = 'RIGHT' # 角色目前面向，決定手電筒照亮的方向
 # --- 走路動畫 ---
 conductor_anim_index = 0 # 目前播放到走路動畫的第幾格
 conductor_anim_timer = 0 # 累積經過的毫秒數，用來判斷何時切換下一格
+is_moving = False # 角色目前是否正在移動（手電筒燈光走路時會跟著晃動，要用到這個狀態）
+flashlight_swing_timer = 0 # 手電筒弧形擺盪、上下彈跳的計時器，只在移動時累積，停下就歸零
 
 night1_intro_lines = [
     ("我", "上班第一天就快要結束了，巡視完列車就可以下班了。"),
@@ -2453,6 +2455,8 @@ _flashlight_dark_img, _flashlight_glow_img, _flashlight_origin_local = _build_fl
 _flashlight_dark_img_flipped = pygame.transform.flip(_flashlight_dark_img, True, False)
 _flashlight_glow_img_flipped = pygame.transform.flip(_flashlight_glow_img, True, False)
 
+FLASHLIGHT_SWING_DURATION = sum(conductor_walk_durations) * 64 if conductor_walk_durations else 0 # 手電筒擺盪一次要花多少毫秒（直接用時長控制，不用再換算 phase 的係數）
+
 
 def draw_lights_out_overlay(camera_offset_x):
     """列車燈光熄滅期間，疊加更深的黑暗效果；若手電筒開啟，用預先算好的柔和漸層光束照亮角色前方，
@@ -2465,6 +2469,24 @@ def draw_lights_out_overlay(camera_offset_x):
     if flashlight_on and '老式手電筒' in inventory:
         origin_x = conductor_rect.centerx - camera_offset_x
         origin_y = conductor_rect.centery
+
+        if is_moving:
+            # 走路時手電筒跟著手部擺動晃一晃：快速的小晃動用畫面時間，弧形擺盪、上下彈跳
+            # 則用 flashlight_swing_timer（只在移動時累積、跟走路動畫一起歸零）換算的進度，
+            # 動畫時長由 FLASHLIGHT_SWING_DURATION 直接控制，好調整、好理解
+            t = pygame.time.get_ticks()
+            origin_x += math.sin(t / 100.0) * 5
+            origin_y += math.sin(t / 55.0) * 3
+            swing_progress = (flashlight_swing_timer / FLASHLIGHT_SWING_DURATION) if FLASHLIGHT_SWING_DURATION else 0
+            phase = 2 * math.pi * swing_progress
+            # 像鐘擺一樣的弧形擺盪軌跡，模擬手真的握著手電筒、手臂小幅度前後擺動的感覺
+            # （擺到兩側時光源會微微「抬高」一點，畫出一道弧線，不是單純的直線晃動）
+            arc_length = 10
+            arc_angle = math.sin(phase) * math.radians(12)
+            origin_x += math.sin(arc_angle) * arc_length
+            origin_y += (1 - math.cos(arc_angle)) * arc_length
+            # 上下起伏的弧狀彈跳軌跡，頻率是弧形擺盪的兩倍
+            origin_y -= abs(math.sin(phase)) * 4
 
         if facing_direction == 'LEFT':
             dark_surf, glow_surf = _flashlight_dark_img_flipped, _flashlight_glow_img_flipped
@@ -2485,13 +2507,16 @@ def draw_lights_out_overlay(camera_offset_x):
 
 def draw_task_hint():
     """在畫面上方顯示目前的任務指引文字，依所在的天數／時段顯示不同內容：
-    第一天白天：探索車廂 → （碰過工具間的門後）找出工具間鑰匙 → （打開過操作台置物櫃門後，優先權更高）獲得螺絲起子。
+    第一天白天：探索車廂 → （碰過工具間的門後）找出工具間鑰匙 → （打開過操作台置物櫃門後，優先權更高）獲得螺絲起子
+    → （拿到螺絲起子後，優先權最高）打開上鎖的櫃子。
     第一天晚上：巡視車廂 → （走到第四節車廂熄燈後）打開手電筒 → 返回駕駛室。
     第二天白天：探索車廂 → （拿到舊路線圖後）尋找員工日誌。"""
     current_stage = DAY_NIGHT_STAGES[day_night_index]
     task_text = None
     if current_stage == 'DAY1_DAY':
-        if discovered_console_box_locked and SCREWDRIVER_TABLE_ITEM_NAME not in inventory:
+        if SCREWDRIVER_TABLE_ITEM_NAME in inventory and not console_box_unlocked:
+            task_text = "任務：打開上鎖的櫃子"
+        elif discovered_console_box_locked and SCREWDRIVER_TABLE_ITEM_NAME not in inventory:
             task_text = "任務：獲得螺絲起子"
         elif discovered_toolroom_locked and TOOLROOM_KEY_ITEM_NAME not in inventory:
             task_text = "任務：找出工具間鑰匙"
@@ -2736,7 +2761,7 @@ def draw_interact_hint(camera_offset_x):
     if not lights_out:
         if current_scene == OLD_LADY_SCENE and is_daytime():
             interactables.append(old_lady_interact_rect)
-        if current_scene == GIRL_SCENE:
+        if current_scene == GIRL_SCENE and is_daytime():
             interactables.append(girl_interact_rect)
         if current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX:
             interactables.append(old_worker_interact_rect)
@@ -3049,6 +3074,12 @@ while running:
 
             current_frame = conductor_walk_frames[conductor_anim_index]
             conductor_img = pygame.transform.flip(current_frame, True, False) if facing_direction == 'RIGHT' else current_frame
+
+        # 手電筒弧形擺盪／上下彈跳的計時器，只在移動時累積、超過一輪擺盪時長就繞回開頭，停下就歸零
+        if is_moving and FLASHLIGHT_SWING_DURATION:
+            flashlight_swing_timer = (flashlight_swing_timer + dt) % FLASHLIGHT_SWING_DURATION
+        else:
+            flashlight_swing_timer = 0
 
         # 走路腳步聲：角色移動時依固定間隔輪流播放切好的腳步聲，開始移動就立刻先響一聲，
         # 之後每隔 FOOTSTEP_INTERVAL 毫秒播下一顆（播完 4 顆後從頭循環），停下腳步就歸零
