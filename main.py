@@ -203,6 +203,12 @@ music_channel_a = pygame.mixer.Channel(0) # 兩個聲道輪流當「目前播放
 music_channel_b = pygame.mixer.Channel(1)
 music_active_channel = None # 目前正在播放（前景）的聲道，None 表示沒有音樂在播
 
+# 音效各自的基準音量（在音量滑桿 100% 時的大小），實際播放音量是「基準音量 x 音量滑桿」，
+# 這樣拖動音量滑桿時，背景音樂跟所有音效才會一起變大聲、變小聲
+FOOTSTEP_BASE_VOLUME = 0.35
+HORROR_SINGING_BASE_VOLUME = 1.0
+HORROR_SCREAM_BASE_VOLUME = 1.0
+
 # 晚上打開手電筒後遇到小女孩的恐怖事件音效（哼歌、尖叫），用一般的 Sound.play() 播放，
 # 會自動找聲道0、1以外的空閒聲道，不會跟背景音樂互搶
 try:
@@ -275,7 +281,7 @@ def load_walking_footstep_sounds(filename, volume):
 # 角色走路的腳步聲：把 walking.mp3 切成一顆一顆腳步聲，角色移動時依固定間隔輪流播放，
 # 不依賴走路動畫本身（動畫一輪要 2 秒多，用動畫進度來對齊反而常常只聽到第一步）
 try:
-    footstep_sounds = load_walking_footstep_sounds('walking.mp3', 0.35)
+    footstep_sounds = load_walking_footstep_sounds('walking.mp3', FOOTSTEP_BASE_VOLUME)
 except (pygame.error, FileNotFoundError) as e:
     print(f"無法載入音效 'walking.mp3': {e}")
     footstep_sounds = []
@@ -283,6 +289,20 @@ FOOTSTEP_INTERVAL = 800 if footstep_sounds else 0 # 每顆腳步聲間隔的毫�
 footstep_timer = 0 # 距離下一顆腳步聲還要多少毫秒
 footstep_play_index = 0 # 下一顆要播放的是第幾顆腳步聲（會依序循環）
 current_music_key = None # 目前正在播放的音樂鍵值，None 表示沒有音樂在播
+
+
+def apply_sound_effect_volumes():
+    """依照目前的音量設定（music_volume），同步調整所有音效的音量
+    （腳步聲、恐怖事件的哼歌／尖叫），不是只調整背景音樂"""
+    for footstep_sound in footstep_sounds:
+        footstep_sound.set_volume(FOOTSTEP_BASE_VOLUME * music_volume)
+    if horror_girl_singing_sound:
+        horror_girl_singing_sound.set_volume(HORROR_SINGING_BASE_VOLUME * music_volume)
+    if little_girl_scream_sound:
+        little_girl_scream_sound.set_volume(HORROR_SCREAM_BASE_VOLUME * music_volume)
+
+
+apply_sound_effect_volumes() # 套用一次預設音量，讓音效跟背景音樂的預設大小一致
 
 
 def get_desired_music_key():
@@ -1545,6 +1565,11 @@ luggage_rack_item_rect = pygame.Rect(0, 0, 70, 70)
 luggage_rack_item_rect.center = luggage_rack_item_pos
 current_luggage_rack_key = None # 目前正在看的是哪一個行李架：(場景, 索引)；不在行李架特寫畫面時是 None
 
+# 第一天白天的任務指引：一開始是「探索車廂」，玩家親自發現工具間、操作台櫃子被鎖住之後，
+# 才會分別換成對應的提示（操作台櫃子鎖住的提示優先權比較高）
+discovered_toolroom_locked = False # 是否已經碰過工具間的門，發現需要鑰匙
+discovered_console_box_locked = False # 是否已經打開過操作台置物櫃門，發現鎖著需要螺絲起子
+
 
 def draw_hover_glow(rect, mouse_pos, color=(255, 240, 150)):
     """如果滑鼠停在 rect 上，在它周圍畫一圈柔和的亮光，提示這裡可以點擊互動"""
@@ -1597,6 +1622,7 @@ def set_volume_from_x(track_rect, x):
     # 交叉淡入淡出期間兩個聲道可能都在播放，兩個都要調整音量
     music_channel_a.set_volume(music_volume)
     music_channel_b.set_volume(music_volume)
+    apply_sound_effect_volumes() # 背景音樂以外的其他音效也要跟著一起調整
 
 
 def handle_volume_slider_mousedown(track_rect, mouse_pos):
@@ -2457,16 +2483,31 @@ def draw_lights_out_overlay(camera_offset_x):
     screen.blit(overlay, (0, 0))
 
 
-def draw_lights_out_hint():
-    """第一天晚上事件期間，依目前階段顯示對應的任務指引：
-    巡視車廂 → （走到第四節車廂熄燈後）打開手電筒 → 返回駕駛室"""
-    if night1_patrol_active:
-        task_text = "任務：巡視車廂"
-    elif lights_out and not flashlight_on:
-        task_text = "任務：打開手電筒"
-    elif lights_out:
-        task_text = "任務：返回駕駛室"
-    else:
+def draw_task_hint():
+    """在畫面上方顯示目前的任務指引文字，依所在的天數／時段顯示不同內容：
+    第一天白天：探索車廂 → （碰過工具間的門後）找出工具間鑰匙 → （打開過操作台置物櫃門後，優先權更高）獲得螺絲起子。
+    第一天晚上：巡視車廂 → （走到第四節車廂熄燈後）打開手電筒 → 返回駕駛室。
+    第二天白天：探索車廂 → （拿到舊路線圖後）尋找員工日誌。"""
+    current_stage = DAY_NIGHT_STAGES[day_night_index]
+    task_text = None
+    if current_stage == 'DAY1_DAY':
+        if discovered_console_box_locked and SCREWDRIVER_TABLE_ITEM_NAME not in inventory:
+            task_text = "任務：獲得螺絲起子"
+        elif discovered_toolroom_locked and TOOLROOM_KEY_ITEM_NAME not in inventory:
+            task_text = "任務：找出工具間鑰匙"
+        else:
+            task_text = "任務：探索車廂"
+    elif current_stage == 'DAY1_NIGHT':
+        if night1_patrol_active:
+            task_text = "任務：巡視車廂"
+        elif lights_out and not flashlight_on:
+            task_text = "任務：打開手電筒"
+        elif lights_out:
+            task_text = "任務：返回駕駛室"
+    elif current_stage == 'DAY2_DAY':
+        task_text = "任務：尋找員工日誌" if '舊路線圖' in inventory else "任務：探索車廂"
+
+    if not task_text:
         return
     hint_text_surf = font_small.render(task_text, True, WHITE)
     hint_rect = hint_text_surf.get_rect()
@@ -2628,6 +2669,7 @@ def reset_game():
     global dialogue_lines, dialogue_index, game_over_reason, intro_monologue_shown
     global console_box_screws, console_box_unlocked, screw_removal_anim, current_luggage_rack_key
     global horror_girl_singing_channel, horror_girl_scream_channel, horror_girl_event_done
+    global discovered_toolroom_locked, discovered_console_box_locked
 
     conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - CONDUCTOR_SIZE - 10
     conductor_rect.y = HEIGHT - FLOOR_HEIGHT - CONDUCTOR_SIZE + CONDUCTOR_Y_OFFSET
@@ -2670,6 +2712,9 @@ def reset_game():
     horror_girl_singing_channel = None
     horror_girl_scream_channel = None
     horror_girl_event_done = False
+
+    discovered_toolroom_locked = False
+    discovered_console_box_locked = False
 
 
 def draw_conductor(surface, rect, image, camera_offset_x):
@@ -2752,6 +2797,7 @@ def try_interact(click_pos=None):
     （NPC對話、撿道具、開櫃子、開門、切換場景等）。按 F 鍵或滑鼠左鍵都會呼叫這個函式；
     click_pos 是滑鼠左鍵點擊當下的邏輯座標（按 F 鍵觸發時沒有點擊位置，傳入 None）。"""
     global dialogue_lines, dialogue_index, active_npc, game_state, current_luggage_rack_key, horror_girl_singing_channel
+    global discovered_toolroom_locked
 
     matched_rack_index = None
     if not lights_out and current_scene in LUGGAGE_RACK_SCENES:
@@ -2823,6 +2869,7 @@ def try_interact(click_pos=None):
             # 走進工具間前，先播放開門過場
             start_door_open_transition(open_toolroom_img, 'TOOLROOM_VIEW')
         else:
+            discovered_toolroom_locked = True # 任務指引改成提示找出工具間鑰匙
             dialogue_lines = [(" ", "門鎖住了，需要工具間鑰匙才能進去。")]
             dialogue_index = 0
             active_npc = None
@@ -3063,7 +3110,7 @@ while running:
         draw_inventory_hint()
         draw_flashlight_hint()
         draw_time_label()
-        draw_lights_out_hint()
+        draw_task_hint()
 
     elif game_state == 'PAUSE_MENU':
         # --- 暫停選單的事件與繪圖 ---
@@ -3367,6 +3414,8 @@ while running:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_pos = to_logical_pos(event.pos)
                 if console_cabinet_door_rect.collidepoint(mouse_pos):
+                    if not console_box_unlocked:
+                        discovered_console_box_locked = True # 任務指引改成提示獲得螺絲起子（優先權比工具間鑰匙高）
                     game_state = 'BOX_VIEW'
 
         draw_console_focus()
