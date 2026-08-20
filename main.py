@@ -18,6 +18,14 @@ def load_height_locked_image(filename):
     width = round(HEIGHT * original.get_width() / original.get_height())
     return pygame.transform.smoothscale(original, (width, HEIGHT))
 
+
+def load_width_locked_image(filename, target_width):
+    """載入圖片，等比例縮放到指定寬度，不會造成上下/左右拉伸變形；高度依照圖片原始長寬比例算出來。
+    給地圖這種本身很寬、需要完整看到全貌（而不是蓋滿整個畫面）的圖片使用。"""
+    original = pygame.image.load(asset_path(filename)).convert_alpha()
+    height = round(target_width * original.get_height() / original.get_width())
+    return pygame.transform.smoothscale(original, (target_width, height))
+
 # 2. 設定視窗大小與標題
 WIDTH, HEIGHT = 800, 400 # 遊戲畫面的邏輯解析度（所有繪圖座標都以這個尺寸為準）
 CARRIAGE_WIDTH = 1600 # 車廂場景的寬度
@@ -627,6 +635,16 @@ except pygame.error as e:
     print("請確認 'open_toolroom.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用黑色背景作為替代。")
     open_toolroom_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入列車地圖（按 M 鍵查看），本身是很寬的俯視平面圖，等比例縮到指定寬度、完整顯示，不裁切、不拉伸
+MAP_IMG_WIDTH = 740
+try:
+    map_img = load_width_locked_image('map.png', MAP_IMG_WIDTH)
+except pygame.error as e:
+    print(f"無法載入圖片 'map.png': {e}")
+    print("請確認 'map.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    map_img = None # 如果圖片載入失敗，設定為 None
 
 try:
     tooltable_img = load_height_locked_image('tooltable.png')
@@ -1868,6 +1886,7 @@ def draw_manual_screen():
             "F : 與場景互動",
             "B : 開啟背包",
             "L : 開關手電筒（需持有手電筒）",
+            "M : 開啟地圖",
             "TAB : 關閉此手冊",
             "ESC : 開啟選單"
         ]
@@ -2230,6 +2249,46 @@ def draw_bottom_f_hint(text):
     screen.blit(hint_surf, (hint_bg_rect.centerx - hint_surf.get_width() // 2, hint_bg_rect.centery - hint_surf.get_height() // 2))
 
 
+# --- 列車地圖（按 M 查看）：每個場景在 map.png 原始圖片裡對應的 x 座標範圍（測量自圖片本身），
+# 紅點會依照角色在該場景世界座標裡的比例位置，內插在這個範圍裡，跟著左右移動 ---
+MAP_SCENE_X_RANGES = {
+    'COCKPIT': (40, 285),
+    'CARRIAGE_1': (285, 605),
+    'CONNECTION_1': (605, 745),
+    'CARRIAGE_2': (745, 1045),
+    'CONNECTION_2': (1045, 1215), # 廁所
+    'CARRIAGE_3': (1215, 1520),
+    'CONNECTION_3': (1520, 1810), # 工具間
+    'CARRIAGE_4': (1810, 2130),
+}
+MAP_MARKER_Y_ORIGINAL = 315 # 紅點固定在這個原始圖片座標高度（走道的垂直中央）
+MAP_IMG_ORIGINAL_WIDTH = 2172
+
+
+def draw_map_screen():
+    """繪製列車地圖畫面：置中顯示 map.png，並用紅色圓點標示玩家目前在地圖上的位置"""
+    screen.fill(BLACK)
+    if map_img:
+        map_pos = ((WIDTH - map_img.get_width()) // 2, (HEIGHT - map_img.get_height()) // 2)
+        screen.blit(map_img, map_pos)
+
+        x_range = MAP_SCENE_X_RANGES.get(current_scene)
+        if x_range:
+            scale = map_img.get_width() / MAP_IMG_ORIGINAL_WIDTH
+            world_width = get_scene_width(current_scene)
+            ratio = (conductor_rect.centerx / world_width) if world_width else 0.5
+            ratio = max(0.0, min(1.0, ratio))
+            orig_x = x_range[0] + (x_range[1] - x_range[0]) * ratio
+            dot_x = map_pos[0] + orig_x * scale
+            dot_y = map_pos[1] + MAP_MARKER_Y_ORIGINAL * scale
+            pygame.draw.circle(screen, RED, (round(dot_x), round(dot_y)), 7)
+            pygame.draw.circle(screen, WHITE, (round(dot_x), round(dot_y)), 7, 2)
+
+    title_surf = font.render("列車地圖", True, WHITE)
+    screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, 12))
+    draw_bottom_f_hint("M : 關閉地圖")
+
+
 def draw_toilet_view():
     """繪製走進廁所後看到的畫面，底部顯示按 F 離開的提示"""
     if toilet_img:
@@ -2422,16 +2481,28 @@ def draw_inventory_hint():
 
 
 def draw_flashlight_hint():
-    """如果玩家持有手電筒，在左上角顯示目前開關狀態"""
+    """如果玩家持有手電筒，在左上角顯示目前開關狀態；緊接在地圖提示下面"""
     if '老式手電筒' not in inventory:
         return
     status_text = "手電筒：開啟" if flashlight_on else "手電筒：關閉"
     hint_text_surf = font_small.render(status_text, True, WHITE)
     hint_rect = hint_text_surf.get_rect()
     hint_bg_rect = pygame.Rect(0, 0, hint_rect.width + 20, hint_rect.height + 12)
-    hint_bg_rect.topleft = (15, 55)
+    hint_bg_rect.topleft = (15, 95)
     hint_bg = pygame.Surface(hint_bg_rect.size, pygame.SRCALPHA)
     hint_bg.fill((200, 160, 60, 170) if flashlight_on else (0, 0, 0, 150))
+    screen.blit(hint_bg, hint_bg_rect)
+    screen.blit(hint_text_surf, (hint_bg_rect.centerx - hint_rect.width // 2, hint_bg_rect.centery - hint_rect.height // 2))
+
+
+def draw_map_hint():
+    """在左上角顯示提示：按 M 開關地圖，緊接在背包提示下面（手電筒提示改到地圖提示下面）"""
+    hint_text_surf = font_small.render("M : 地圖", True, WHITE)
+    hint_rect = hint_text_surf.get_rect()
+    hint_bg_rect = pygame.Rect(0, 0, hint_rect.width + 20, hint_rect.height + 12)
+    hint_bg_rect.topleft = (15, 55)
+    hint_bg = pygame.Surface(hint_bg_rect.size, pygame.SRCALPHA)
+    hint_bg.fill((0, 0, 0, 150))
     screen.blit(hint_bg, hint_bg_rect)
     screen.blit(hint_text_surf, (hint_bg_rect.centerx - hint_rect.width // 2, hint_bg_rect.centery - hint_rect.height // 2))
 
@@ -3105,6 +3176,8 @@ while running:
                 if event.key == pygame.K_b:
                     inventory_scroll_offset = 0
                     game_state = 'INVENTORY'
+                if event.key == pygame.K_m:
+                    game_state = 'MAP'
                 if event.key == pygame.K_l and '老式手電筒' in inventory:
                     flashlight_on = not flashlight_on
                 if event.key == pygame.K_f:
@@ -3249,6 +3322,7 @@ while running:
         draw_luggage_rack_hover(camera_x)
         draw_manual_hint()
         draw_inventory_hint()
+        draw_map_hint()
         draw_flashlight_hint()
         draw_time_label()
         draw_task_hint()
@@ -3555,6 +3629,17 @@ while running:
         draw_conductor(screen, conductor_rect, conductor_img, camera_x)
         draw_night_overlay()
         draw_inventory_screen()
+
+    elif game_state == 'MAP':
+        # --- 地圖畫面的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_m or event.key == pygame.K_ESCAPE:
+                    game_state = 'PLAYING'
+
+        draw_map_screen()
 
     elif game_state == 'CONSOLE_FOCUS':
         # --- 操作台細節畫面的事件與繪圖 ---
