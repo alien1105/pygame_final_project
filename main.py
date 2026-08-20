@@ -18,6 +18,14 @@ def load_height_locked_image(filename):
     width = round(HEIGHT * original.get_width() / original.get_height())
     return pygame.transform.smoothscale(original, (width, HEIGHT))
 
+
+def load_width_locked_image(filename, target_width):
+    """載入圖片，等比例縮放到指定寬度，不會造成上下/左右拉伸變形；高度依照圖片原始長寬比例算出來。
+    給地圖這種本身很寬、需要完整看到全貌（而不是蓋滿整個畫面）的圖片使用。"""
+    original = pygame.image.load(asset_path(filename)).convert_alpha()
+    height = round(target_width * original.get_height() / original.get_width())
+    return pygame.transform.smoothscale(original, (target_width, height))
+
 # 2. 設定視窗大小與標題
 WIDTH, HEIGHT = 800, 400 # 遊戲畫面的邏輯解析度（所有繪圖座標都以這個尺寸為準）
 CARRIAGE_WIDTH = 1600 # 車廂場景的寬度
@@ -119,6 +127,15 @@ except (pygame.error, FileNotFoundError) as e:
     font_dialogue = font
     font_dialogue_small = font_small
 
+# 工作日誌內文字級更小一點：有幾天的日誌內容偏長，用比手冊內文更小的字級搭配較窄的行距，
+# 才能在頁面高度限制內完整放下，不會被下面的換頁按鈕蓋到
+try:
+    font_work_note = pygame.font.Font('ThePeakFontBeta_V0_102.ttf', 13)
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入字型 'ThePeakFontBeta_V0_102.ttf': {e}")
+    print("工作日誌將改用一般字型作為替代。")
+    font_work_note = font_small
+
 # 3. 載入並設定列車長（走路動畫）
 CONDUCTOR_WALK_CROP = (713, 74, 1261, 1054) # main_character_walk2.gif 裡角色的裁切範圍 (left, top, right, bottom)，貼齊腳底，避免角色浮空
 conductor_walk_frames = []    # 走路動畫的每一張畫格 (pygame Surface)
@@ -203,6 +220,12 @@ music_channel_a = pygame.mixer.Channel(0) # 兩個聲道輪流當「目前播放
 music_channel_b = pygame.mixer.Channel(1)
 music_active_channel = None # 目前正在播放（前景）的聲道，None 表示沒有音樂在播
 
+# 音效各自的基準音量（在音量滑桿 100% 時的大小），實際播放音量是「基準音量 x 音量滑桿」，
+# 這樣拖動音量滑桿時，背景音樂跟所有音效才會一起變大聲、變小聲
+FOOTSTEP_BASE_VOLUME = 0.25
+HORROR_SINGING_BASE_VOLUME = 1.0
+HORROR_SCREAM_BASE_VOLUME = 1.0
+
 # 晚上打開手電筒後遇到小女孩的恐怖事件音效（哼歌、尖叫），用一般的 Sound.play() 播放，
 # 會自動找聲道0、1以外的空閒聲道，不會跟背景音樂互搶
 try:
@@ -217,7 +240,123 @@ except (pygame.error, FileNotFoundError) as e:
     little_girl_scream_sound = None
 horror_girl_singing_channel = None # 目前正在播放哼歌音效的聲道，離開事件、進入尖叫階段時要停掉
 horror_girl_scream_channel = None # 目前正在播放尖叫音效的聲道，用來偵測音效是否播完
+horror_girl_event_done = False # 恐怖事件是否已經結束：結束後小女孩晚上就不會再出現、不能再互動
+
+# 晚上熄燈後「回頭」驚嚇事件的音效（第四次回頭的陰森笑聲、最後跳出來的驚嚇音效）
+JUMPSCARE_LAUGH_BASE_VOLUME = 1.0
+JUMPSCARE_BASE_VOLUME = 1.0
+try:
+    jumpscare_laugh_sound = pygame.mixer.Sound(os.path.join('sound', 'jumpscare_laugh.mp3'))
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入音效 'jumpscare_laugh.mp3': {e}")
+    jumpscare_laugh_sound = None
+try:
+    jumpscare_sound = pygame.mixer.Sound(os.path.join('sound', 'jumpscare.mp3'))
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入音效 'jumpscare.mp3': {e}")
+    jumpscare_sound = None
+
+# 走進廁所、工具間時的開門音效；獲得道具時的拾取音效
+OPEN_DOOR_BASE_VOLUME = 0.8
+PICK_ITEM_BASE_VOLUME = 0.5
+try:
+    open_door_sound = pygame.mixer.Sound(os.path.join('sound', 'open_door.mp3'))
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入音效 'open_door.mp3': {e}")
+    open_door_sound = None
+try:
+    pick_item_sound = pygame.mixer.Sound(os.path.join('sound', 'pick.mp3'))
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入音效 'pick.mp3': {e}")
+    pick_item_sound = None
+
+
+def load_walking_footstep_sounds(filename, volume):
+    """把整段走路音效切割成一顆一顆單獨的腳步聲：先算出音量的震幅包絡線，抓出每一次腳踩地的爆音時間點，
+    再依照這些時間點把音檔切成一小段一小段，回傳切好的腳步聲列表。
+    找不到 numpy／pygame.sndarray 或偵測失敗時，整段音檔當作只有一顆腳步聲使用。"""
+    sound = pygame.mixer.Sound(os.path.join('sound', filename))
+    try:
+        import numpy as np
+        import pygame.sndarray as pygame_sndarray # 用別名 import，避免局部繫結蓋掉外層的 pygame 名稱
+        sample_rate = pygame.mixer.get_init()[0]
+        arr = pygame_sndarray.array(sound)
+        mono = arr.astype(np.float32).mean(axis=1) if arr.ndim > 1 else arr.astype(np.float32)
+        total_samples = len(mono)
+
+        # 用整流＋滑動平均算出震幅包絡線，再找出明顯高於平均音量的爆音（腳踩地的瞬間）當作腳步時間點
+        window = max(1, round(sample_rate * 0.02)) # 20 毫秒的平滑窗
+        envelope = np.convolve(np.abs(mono), np.ones(window) / window, mode='same')
+        envelope = envelope / max(envelope.max(), 1e-6)
+        threshold = 0.3
+        min_gap = round(sample_rate * 0.25) # 兩個腳步之間至少間隔 250 毫秒，避免同一步被偵測成好幾個峰值
+        onsets = []
+        i = 0
+        while i < total_samples:
+            if envelope[i] > threshold:
+                window_end = min(total_samples, i + min_gap)
+                peak = i + int(np.argmax(envelope[i:window_end]))
+                onsets.append(peak)
+                i = peak + min_gap
+            else:
+                i += 1
+        if not onsets:
+            raise ValueError('沒有偵測到明顯的腳步聲峰值')
+
+        lead = round(sample_rate * 0.03) # 峰值前保留一點點時間，才不會切到攻擊起始的瞬間
+        max_len = round(sample_rate * 0.45) # 兩個腳步之間才需要限制長度，避免切到下一步；最後一顆（或只有一顆）直接用到檔案結尾
+        footstep_sounds = []
+        for index, onset in enumerate(onsets):
+            start = max(0, onset - lead)
+            if index + 1 < len(onsets):
+                next_onset = onsets[index + 1] - lead
+                end = min(total_samples, next_onset, onset + max_len)
+            else:
+                end = total_samples # 最後一顆（或只有一顆）腳步聲，不要提早裁掉尾音
+            clip = np.ascontiguousarray(arr[start:end])
+            clip_sound = pygame_sndarray.make_sound(clip)
+            clip_sound.set_volume(volume)
+            footstep_sounds.append(clip_sound)
+        return footstep_sounds
+    except Exception as e:
+        print(f"無法切割音效 '{filename}' 的腳步聲，改用整段音效當作單一腳步聲: {e}")
+        sound.set_volume(volume)
+        return [sound]
+
+
+# 角色走路的腳步聲：把 walking.mp3 切成一顆一顆腳步聲，角色移動時依固定間隔輪流播放，
+# 不依賴走路動畫本身（動畫一輪要 2 秒多，用動畫進度來對齊反而常常只聽到第一步）
+try:
+    footstep_sounds = load_walking_footstep_sounds('walking.mp3', FOOTSTEP_BASE_VOLUME)
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入音效 'walking.mp3': {e}")
+    footstep_sounds = []
+FOOTSTEP_INTERVAL = 800 if footstep_sounds else 0 # 每顆腳步聲間隔的毫秒數，固定 800 毫秒
+footstep_timer = 0 # 距離下一顆腳步聲還要多少毫秒
+footstep_play_index = 0 # 下一顆要播放的是第幾顆腳步聲（會依序循環）
 current_music_key = None # 目前正在播放的音樂鍵值，None 表示沒有音樂在播
+
+
+def apply_sound_effect_volumes():
+    """依照目前的音量設定（music_volume），同步調整所有音效的音量
+    （腳步聲、恐怖事件的哼歌／尖叫、回頭驚嚇事件的音效），不是只調整背景音樂"""
+    for footstep_sound in footstep_sounds:
+        footstep_sound.set_volume(FOOTSTEP_BASE_VOLUME * music_volume)
+    if horror_girl_singing_sound:
+        horror_girl_singing_sound.set_volume(HORROR_SINGING_BASE_VOLUME * music_volume)
+    if little_girl_scream_sound:
+        little_girl_scream_sound.set_volume(HORROR_SCREAM_BASE_VOLUME * music_volume)
+    if jumpscare_laugh_sound:
+        jumpscare_laugh_sound.set_volume(JUMPSCARE_LAUGH_BASE_VOLUME * music_volume)
+    if jumpscare_sound:
+        jumpscare_sound.set_volume(JUMPSCARE_BASE_VOLUME * music_volume)
+    if open_door_sound:
+        open_door_sound.set_volume(OPEN_DOOR_BASE_VOLUME * music_volume)
+    if pick_item_sound:
+        pick_item_sound.set_volume(PICK_ITEM_BASE_VOLUME * music_volume)
+
+
+apply_sound_effect_volumes() # 套用一次預設音量，讓音效跟背景音樂的預設大小一致
 
 
 def get_desired_music_key():
@@ -357,6 +496,66 @@ except Exception as e:
     print("操作手冊／生存指南畫面將改用原本繪製的白色面板作為替代。")
     manual_bg_img = None # 如果圖片載入失敗，設定為 None
 
+# 載入工作日誌頁籤專用的背景圖片，做法跟上面一樣：裁掉透明留白、縮放到跟其他頁籤同樣的大小
+try:
+    work_note_pil = PILImage.open(asset_path('work_note.png')).convert('RGBA')
+    work_note_bbox = work_note_pil.split()[3].getbbox()
+    if work_note_bbox:
+        work_note_pil = work_note_pil.crop(work_note_bbox)
+    work_note_img_original = pygame.image.frombuffer(work_note_pil.tobytes(), work_note_pil.size, 'RGBA').convert_alpha()
+    work_note_img = pygame.transform.smoothscale(work_note_img_original, (MANUAL_BG_WIDTH, MANUAL_BG_HEIGHT))
+except Exception as e:
+    print(f"無法載入圖片 'work_note.png': {e}")
+    print("請確認 'work_note.png' 檔案與 main.py 在同一個資料夾中。")
+    print("工作日誌頁籤將改用跟其他頁籤共用的背景作為替代。")
+    work_note_img = manual_bg_img # 如果圖片載入失敗，退回共用的筆記本背景
+
+
+def load_text_file(filename):
+    """讀取跟 main.py 同一層資料夾裡的純文字檔案內容（工作日誌的每一頁文字），讀不到就回傳空字串"""
+    try:
+        with open(filename, encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        print(f"無法載入文字檔 '{filename}': {e}")
+        return ''
+
+
+# 工作日誌每一天結束時要寫進去的內容，第二天結束時一次寫入兩頁（day2、day2-2）
+WORK_NOTE_DAY1_TEXT = load_text_file('work_note_day1.txt')
+WORK_NOTE_DAY2_TEXT = load_text_file('work_note_day2.txt')
+WORK_NOTE_DAY2_2_TEXT = load_text_file('work_note_day2-2.txt')
+
+
+def load_tab_button_image(filename, target_height):
+    """載入頁籤按鈕圖片，裁掉透明留白，等比例縮放到指定高度，不會拉伸變形"""
+    pil_img = PILImage.open(asset_path(filename)).convert('RGBA')
+    bbox = pil_img.split()[3].getbbox()
+    if bbox:
+        pil_img = pil_img.crop(bbox)
+    img = pygame.image.frombuffer(pil_img.tobytes(), pil_img.size, 'RGBA').convert_alpha()
+    width = round(target_height * img.get_width() / img.get_height())
+    return pygame.transform.smoothscale(img, (width, target_height))
+
+
+# 三個頁籤按鈕圖片（操作手冊／生存指南／工作日誌），取代原本手繪的書籤造型標籤
+MANUAL_TAB_BUTTON_HEIGHT = 48
+try:
+    manual_tab_manual_img = load_tab_button_image('操作手冊_btn.png', MANUAL_TAB_BUTTON_HEIGHT)
+except Exception as e:
+    print(f"無法載入圖片 '操作手冊_btn.png': {e}")
+    manual_tab_manual_img = None
+try:
+    manual_tab_guide_img = load_tab_button_image('生存指南_btn.png', MANUAL_TAB_BUTTON_HEIGHT)
+except Exception as e:
+    print(f"無法載入圖片 '生存指南_btn.png': {e}")
+    manual_tab_guide_img = None
+try:
+    manual_tab_work_note_img = load_tab_button_image('工作日誌_btn.png', MANUAL_TAB_BUTTON_HEIGHT)
+except Exception as e:
+    print(f"無法載入圖片 '工作日誌_btn.png': {e}")
+    manual_tab_work_note_img = None
+
 # 載入白天車廂背景圖片（維持原始長寬比例縮放，不拉伸變形；
 # 車廂用兩張完整的圖片並排組成，車廂寬度改成剛好是圖片寬度的兩倍）
 TRAIN_DAY_TILE_COUNT = 2
@@ -479,6 +678,15 @@ except pygame.error as e:
     print("將改用黑色背景作為替代。")
     toilet_img = None # 如果圖片載入失敗，設定為 None
 
+# 載入走進廁所前，手伸向門把開門的過場圖片，做法跟其他特寫畫面一樣：等比例縮放，不拉伸變形
+try:
+    open_toilet_img = load_height_locked_image('open_toilet.png')
+except pygame.error as e:
+    print(f"無法載入圖片 'open_toilet.png': {e}")
+    print("請確認 'open_toilet.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    open_toilet_img = None # 如果圖片載入失敗，設定為 None
+
 # 載入工具間內部、工作桌特寫圖片，做法跟廁所一樣：等比例縮放，不拉伸變形
 try:
     toolroom_img = load_height_locked_image('toolroom.png')
@@ -487,6 +695,25 @@ except pygame.error as e:
     print("請確認 'toolroom.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用黑色背景作為替代。")
     toolroom_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入走進工具間前的開門過場圖片，做法跟廁所一樣
+try:
+    open_toolroom_img = load_height_locked_image('open_toolroom.png')
+except pygame.error as e:
+    print(f"無法載入圖片 'open_toolroom.png': {e}")
+    print("請確認 'open_toolroom.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    open_toolroom_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入列車地圖（按 M 鍵查看），本身是很寬的俯視平面圖，等比例縮到指定寬度、完整顯示，不裁切、不拉伸
+MAP_IMG_WIDTH = 740
+try:
+    map_img = load_width_locked_image('map.png', MAP_IMG_WIDTH)
+except pygame.error as e:
+    print(f"無法載入圖片 'map.png': {e}")
+    print("請確認 'map.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    map_img = None # 如果圖片載入失敗，設定為 None
 
 try:
     tooltable_img = load_height_locked_image('tooltable.png')
@@ -521,6 +748,15 @@ except pygame.error as e:
     print("請確認 'horror_girl_smile.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用黑色背景作為替代。")
     horror_girl_smile_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入晚上熄燈後「回頭」驚嚇事件的畫面，做法跟其他特寫畫面一樣：等比例縮放，不拉伸變形
+try:
+    jumpscare_img = load_height_locked_image('jumpscare.png')
+except pygame.error as e:
+    print(f"無法載入圖片 'jumpscare.png': {e}")
+    print("請確認 'jumpscare.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    jumpscare_img = None # 如果圖片載入失敗，設定為 None
 
 # 載入第二天晚上「不存在的月台」劇情裡穿插的月台照片，做法跟其他特寫畫面一樣：等比例縮放，不拉伸變形
 night2_station_images = {}
@@ -919,9 +1155,21 @@ lights_out = False # 列車燈光是否熄滅中，此時任務指引是先打�
 flashlight_on = False # 手電筒是否開啟中（需持有「老式手電筒」才能開關）
 facing_direction = 'RIGHT' # 角色目前面向，決定手電筒照亮的方向
 
+# --- 熄燈後「回頭」驚嚇事件：熄燈期間，角色面向每反轉一次就算「回頭」一次，
+# 前三次會有 "???" 倒數 "3"、"2"、"1" 的對話框，第四次觸發驚嚇畫面、GAME OVER ---
+TURN_AROUND_JUMPSCARE_THRESHOLD = 4 # 第幾次回頭會觸發驚嚇
+JUMPSCARE_HOLD_DURATION = 2500 # 驚嚇畫面顯示這麼多毫秒後才進入 GAME OVER
+turn_around_count = 0 # 熄燈期間已經回頭幾次
+last_facing_direction_for_turn_check = None # 上一次檢查時的面向；熄燈開始時才會設定，用來偵測「反轉」
+jumpscare_pending = False # 第四次回頭後變 True：不切換畫面、玩家可以照常操作，背景默默偵測笑聲有沒有播完
+jumpscare_laugh_channel = None # 正在播放的笑聲聲道，笑聲一播完就立刻觸發驚嚇畫面
+jumpscare_shown_start_time = 0 # 驚嚇畫面開始顯示的時間，用來計算多久後進入 GAME OVER
+
 # --- 走路動畫 ---
 conductor_anim_index = 0 # 目前播放到走路動畫的第幾格
 conductor_anim_timer = 0 # 累積經過的毫秒數，用來判斷何時切換下一格
+is_moving = False # 角色目前是否正在移動（手電筒燈光走路時會跟著晃動，要用到這個狀態）
+flashlight_swing_timer = 0 # 手電筒弧形擺盪、上下彈跳的計時器，只在移動時累積，停下就歸零
 
 night1_intro_lines = [
     ("我", "上班第一天就快要結束了，巡視完列車就可以下班了。"),
@@ -1223,6 +1471,7 @@ SPEAKER_COLORS = {
     "老維修員": WORKER_COLOR,
     "我": BLUE,
     "旁白": DARK_GRAY,
+    "???": (150, 0, 0),
 }
 
 # --- 對話狀態管理 ---
@@ -1233,23 +1482,48 @@ has_girl_painting = False # 是否已從小女孩手中取得畫
 has_guide = False # 是否已取得《夜間行駛生存指南》，取得後可在手冊畫面切換查看
 
 # --- 手冊畫面（背景是攤開的筆記本圖片，靠右塞滿畫面；左側留一排書籤標籤可切換操作手冊／生存指南）---
-manual_view = 'MANUAL' # 目前手冊畫面顯示的頁籤：MANUAL 操作手冊 / GUIDE 生存指南
+manual_view = 'MANUAL' # 目前手冊畫面顯示的頁籤：MANUAL 操作手冊 / GUIDE 生存指南 / WORK_NOTE 工作日誌
+manual_close_transition = None # 手冊關閉時要接續的特殊轉場（例如切到第二天白天、切到未完待續），沒有就是 None，直接回到 PLAYING
+work_note_pages = [] # 工作日誌已經寫入的內容，依序累加；只有這個清單裡的頁面才能翻到
+work_note_current_page = 0 # 工作日誌目前顯示第幾頁（0-based）
 if manual_bg_img:
     manual_panel_rect = manual_bg_img.get_rect()
     manual_panel_rect.topleft = (MANUAL_TAB_COLUMN_WIDTH, (HEIGHT - manual_bg_img.get_height()) // 2)
 else:
     manual_panel_rect = pygame.Rect(MANUAL_TAB_COLUMN_WIDTH, HEIGHT // 2 - 195, 700 - MANUAL_TAB_COLUMN_WIDTH, 390)
 
-# 貼在書本左側、垂直置中的書籤標籤（縱向排列）。刻意疊進書本邊緣幾個像素，
+# 貼在書本左側、垂直置中的頁籤按鈕圖片（縱向排列）。刻意疊進書本邊緣幾個像素，
 # 蓋掉書本圖片縮放後邊緣那條很淡的模糊像素，不然兩者中間會看起來有一條縫。
-MANUAL_TAB_WIDTH = 140
-MANUAL_TAB_HEIGHT = 48
+MANUAL_TAB_WIDTH = 140 # 按鈕圖片載入失敗時的備用寬度
 MANUAL_TAB_GAP = 10
 MANUAL_TAB_OVERLAP = 8
-_manual_tabs_total_height = MANUAL_TAB_HEIGHT * 2 + MANUAL_TAB_GAP
+# 頁籤順序（由上到下）：操作手冊、工作日誌、生存指南
+_manual_tab_widths = [
+    (img.get_width() if img else MANUAL_TAB_WIDTH)
+    for img in (manual_tab_manual_img, manual_tab_work_note_img, manual_tab_guide_img)
+]
+_manual_tabs_total_height = MANUAL_TAB_BUTTON_HEIGHT * 3 + MANUAL_TAB_GAP * 2
 _manual_tabs_top = manual_panel_rect.centery - _manual_tabs_total_height // 2
-manual_tab_manual_rect = pygame.Rect(manual_panel_rect.x - MANUAL_TAB_WIDTH + MANUAL_TAB_OVERLAP, _manual_tabs_top, MANUAL_TAB_WIDTH, MANUAL_TAB_HEIGHT)
-manual_tab_guide_rect = pygame.Rect(manual_panel_rect.x - MANUAL_TAB_WIDTH + MANUAL_TAB_OVERLAP, manual_tab_manual_rect.bottom + MANUAL_TAB_GAP, MANUAL_TAB_WIDTH, MANUAL_TAB_HEIGHT)
+manual_tab_manual_rect = pygame.Rect(manual_panel_rect.x - _manual_tab_widths[0] + MANUAL_TAB_OVERLAP, _manual_tabs_top, _manual_tab_widths[0], MANUAL_TAB_BUTTON_HEIGHT)
+manual_tab_work_note_rect = pygame.Rect(manual_panel_rect.x - _manual_tab_widths[1] + MANUAL_TAB_OVERLAP, manual_tab_manual_rect.bottom + MANUAL_TAB_GAP, _manual_tab_widths[1], MANUAL_TAB_BUTTON_HEIGHT)
+manual_tab_guide_rect = pygame.Rect(manual_panel_rect.x - _manual_tab_widths[2] + MANUAL_TAB_OVERLAP, manual_tab_work_note_rect.bottom + MANUAL_TAB_GAP, _manual_tab_widths[2], MANUAL_TAB_BUTTON_HEIGHT)
+
+# 手冊、生存指南只用左半頁寬度顯示內文（避免文字跨過中間裝訂線延伸到右頁）
+_manual_content_x = manual_panel_rect.x + round(manual_panel_rect.width * 0.10)
+_manual_content_width = round(manual_panel_rect.width * 0.36)
+
+# 工作日誌內文跟操作手冊／生存指南一樣，只用左半頁的寬度：句子長度超過這個寬度（頁面邊緣）
+# 就換到下一行，不會跨過中間裝訂線延伸到右頁；內容太長、換行後超出一頁高度，
+# 就交給 paginate_work_note_text() 自動切成好幾頁，而不是硬把文字塞成跨頁的寬版面
+WORK_NOTE_CONTENT_X = manual_panel_rect.x + round(manual_panel_rect.width * 0.10)
+WORK_NOTE_CONTENT_WIDTH = round(manual_panel_rect.width * 0.36)
+work_note_prev_rect = pygame.Rect(WORK_NOTE_CONTENT_X, manual_panel_rect.bottom - 40, 26, 26)
+work_note_next_rect = pygame.Rect(WORK_NOTE_CONTENT_X + WORK_NOTE_CONTENT_WIDTH - 26, manual_panel_rect.bottom - 40, 26, 26)
+
+# 工作日誌內文的行距，跟一頁能放下的最大高度（超過這個高度就自動換到下一頁，而不是被截斷或擠出頁面）
+WORK_NOTE_LINE_HEIGHT = 14
+WORK_NOTE_TEXT_TOP = manual_panel_rect.y + 58
+WORK_NOTE_MAX_TEXT_HEIGHT = work_note_prev_rect.top - WORK_NOTE_TEXT_TOP - 4
 
 # 《夜間行駛生存指南》第一頁的前三條規則，格式為 (規則標題, 規則內容, 補充說明)
 guide_rules = [
@@ -1269,9 +1543,11 @@ item_popup = None # None 表示目前沒有要顯示的提示；有的話是 {'n
 
 
 def show_item_popup(item_name):
-    """觸發「獲得道具」的提示，顯示道具圖案（有的話）跟名稱"""
+    """觸發「獲得道具」的提示，顯示道具圖案（有的話）跟名稱，並播放拾取音效"""
     global item_popup
     item_popup = {'name': item_name, 'start_time': pygame.time.get_ticks()}
+    if pick_item_sound:
+        pick_item_sound.play()
 
 
 # --- 切換天數／白天晚上時，疊在畫面上短暫顯示的標題卡（毛筆字「第X天白天／晚上」）---
@@ -1399,6 +1675,42 @@ TOOLROOM_SCENE = 'CONNECTION_3'
 toolroom_interact_rect = pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - 180, 100, 180) # 對應圖片中間的工具間門
 toolroom_interact_rect.centerx = (connect_toolroom_day_img.get_width() if connect_toolroom_day_img else CONNECTION_WIDTH) // 2
 
+# 走進廁所／工具間之前，先顯示一張手伸向門把開門的過場圖片，淡入、停留一下再自動接到內部畫面
+DOOR_OPEN_FADE_IN = 250
+DOOR_OPEN_HOLD = 700
+door_open_image = None # 目前過場要顯示的圖片
+door_open_target_state = None # 過場播完之後要切換到哪個 game_state
+door_open_start_time = 0
+
+
+def start_door_open_transition(image, target_state):
+    """開始播放「開門」過場：先顯示 image、播放開門音效，淡入、停留一下之後自動切到 target_state"""
+    global door_open_image, door_open_target_state, door_open_start_time, game_state
+    door_open_image = image
+    door_open_target_state = target_state
+    door_open_start_time = pygame.time.get_ticks()
+    game_state = 'DOOR_OPENING'
+    if open_door_sound:
+        open_door_sound.play()
+
+
+def draw_door_open_transition():
+    """繪製開門過場畫面：圖片淡入後停留一小段時間，時間到就自動切到內部畫面"""
+    global game_state
+    screen.fill(BLACK)
+    elapsed = pygame.time.get_ticks() - door_open_start_time
+    if door_open_image:
+        alpha = max(0, min(255, round(255 * elapsed / DOOR_OPEN_FADE_IN)))
+        if alpha >= 255:
+            screen.blit(door_open_image, ((WIDTH - door_open_image.get_width()) // 2, 0))
+        else:
+            faded = door_open_image.copy()
+            faded.set_alpha(alpha)
+            screen.blit(faded, ((WIDTH - door_open_image.get_width()) // 2, 0))
+    if elapsed >= DOOR_OPEN_FADE_IN + DOOR_OPEN_HOLD:
+        game_state = door_open_target_state
+
+
 work_table_rect = pygame.Rect(302, 129, 230, 196) # 工具間畫面裡工作桌的範圍（等比例縮放後的位置），滑鼠點擊用
 SCREWDRIVER_TABLE_ITEM_NAME = '維修員留下的螺絲起子'
 screwdriver_table_pos = (279, 188) # 螺絲起子特寫畫面裡道具擺放的位置（等比例縮放後的位置）
@@ -1427,6 +1739,11 @@ luggage_rack_item_pos = (270, 255) # 行李架特寫畫面裡道具擺放的位�
 luggage_rack_item_rect = pygame.Rect(0, 0, 70, 70)
 luggage_rack_item_rect.center = luggage_rack_item_pos
 current_luggage_rack_key = None # 目前正在看的是哪一個行李架：(場景, 索引)；不在行李架特寫畫面時是 None
+
+# 第一天白天的任務指引：一開始是「探索車廂」，玩家親自發現工具間、操作台櫃子被鎖住之後，
+# 才會分別換成對應的提示（操作台櫃子鎖住的提示優先權比較高）
+discovered_toolroom_locked = False # 是否已經碰過工具間的門，發現需要鑰匙
+discovered_console_box_locked = False # 是否已經打開過操作台置物櫃門，發現鎖著需要螺絲起子
 
 
 def draw_hover_glow(rect, mouse_pos, color=(255, 240, 150)):
@@ -1480,6 +1797,7 @@ def set_volume_from_x(track_rect, x):
     # 交叉淡入淡出期間兩個聲道可能都在播放，兩個都要調整音量
     music_channel_a.set_volume(music_volume)
     music_channel_b.set_volume(music_volume)
+    apply_sound_effect_volumes() # 背景音樂以外的其他音效也要跟著一起調整
 
 
 def handle_volume_slider_mousedown(track_rect, mouse_pos):
@@ -1583,49 +1901,52 @@ def draw_settings_screen():
     draw_simple_button(settings_back_button_rect, "返回", DARK_GRAY)
 
 
-# 書籤標籤左側（外露那一側）的鋸齒狀撕紙邊緣，固定的一組偏移量，每次畫面都一樣、不會閃爍
-TORN_EDGE_JITTER = [0, -3, 4, -2, 3, -4, 2, 0]
+def draw_image_tab_button(rect, image, active):
+    """畫一個貼在書本左側的頁籤按鈕圖片：選中的頁籤全亮顯示，其餘頁籤稍微變暗，用來區分目前在看哪一頁"""
+    if not image:
+        return
+    if active:
+        screen.blit(image, rect)
+    else:
+        dimmed = image.copy()
+        dimmed.set_alpha(150)
+        screen.blit(dimmed, rect)
 
 
-def draw_bookmark_tab(rect, active, text):
-    """畫一個貼在書本左側的書籤標籤：外側（左邊）是粗糙的撕紙邊緣，內側（右邊）疊進書本裡"""
-    steps = len(TORN_EDGE_JITTER) - 1
-    left_points = []
-    for i, jitter in enumerate(TORN_EDGE_JITTER):
-        y = rect.top + rect.height * i / steps
-        left_points.append((rect.left + jitter, y))
-    points = left_points + [(rect.right, rect.bottom), (rect.right, rect.top)]
-
-    fill_color = (235, 225, 195) if active else (150, 130, 100) # 選中時是米白色書頁色，沒選中時是暗卡其色標籤
-    text_color = BLACK if active else (245, 240, 225)
-    pygame.draw.polygon(screen, fill_color, points)
-    pygame.draw.polygon(screen, BLACK, points, 2)
-    text_surf = font_handwriting_small.render(text, True, text_color)
-    text_x = rect.centerx - text_surf.get_width() // 2
-    text_y = rect.centery - text_surf.get_height() // 2
-    screen.blit(text_surf, (text_x, text_y))
+def draw_page_nav_arrow(rect, direction, enabled):
+    """畫工作日誌的換頁三角形箭頭：direction 是 -1（上一頁、朝左）或 1（下一頁、朝右）；
+    enabled 是 False 時（沒有更多頁面可以翻）畫成灰暗色，看起來不能點"""
+    color = BLACK if enabled else (190, 180, 165) # 頁面本身是米色系，用深／淺對比區分能不能點
+    if direction < 0:
+        points = [(rect.right, rect.top), (rect.right, rect.bottom), (rect.left, rect.centery)]
+    else:
+        points = [(rect.left, rect.top), (rect.left, rect.bottom), (rect.right, rect.centery)]
+    pygame.draw.polygon(screen, color, points)
 
 
 def draw_manual_screen():
-    """繪製手冊畫面，背景是攤開的筆記本圖片，上方兩個頁籤可切換操作手冊／生存指南"""
+    """繪製手冊畫面，背景是攤開的筆記本圖片，上方三個頁籤按鈕可切換操作手冊／生存指南／工作日誌"""
     # 半透明背景
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 180))
     screen.blit(overlay, (0, 0))
 
     panel_rect = manual_panel_rect
-    if manual_bg_img:
-        screen.blit(manual_bg_img, panel_rect)
+    if manual_view == 'WORK_NOTE':
+        page_img = work_note_img
+    else:
+        page_img = manual_bg_img
+    if page_img:
+        screen.blit(page_img, panel_rect)
     else:
         pygame.draw.rect(screen, WHITE, panel_rect)
         pygame.draw.rect(screen, BLACK, panel_rect, 3)
 
-    # 「操作手冊」頁籤（書籤造型）
-    draw_bookmark_tab(manual_tab_manual_rect, manual_view == 'MANUAL', "操作手冊")
-
-    # 「生存指南」頁籤（取得指南後才會出現，書籤造型）
+    # 三個頁籤按鈕：操作手冊、生存指南（取得指南後才會出現）、工作日誌
+    draw_image_tab_button(manual_tab_manual_rect, manual_tab_manual_img, manual_view == 'MANUAL')
+    draw_image_tab_button(manual_tab_work_note_rect, manual_tab_work_note_img, manual_view == 'WORK_NOTE')
     if has_guide:
-        draw_bookmark_tab(manual_tab_guide_rect, manual_view == 'GUIDE', "生存指南")
+        draw_image_tab_button(manual_tab_guide_rect, manual_tab_guide_img, manual_view == 'GUIDE')
 
     # 內容區：只用左半頁的寬度，文字太長就換行，不要跨過中間裝訂線延伸到右頁
     content_x = panel_rect.x + round(panel_rect.width * 0.10)
@@ -1653,6 +1974,32 @@ def draw_manual_screen():
                 rule_y += line_height
 
             rule_y += 8 # 規則之間的間距
+    elif manual_view == 'WORK_NOTE':
+        title_surf = font_handwriting.render("工作日誌", True, BLACK)
+        screen.blit(title_surf, (WORK_NOTE_CONTENT_X, panel_rect.y + 24))
+
+        if work_note_pages:
+            page_text = work_note_pages[work_note_current_page]
+            text_y = WORK_NOTE_TEXT_TOP
+            for raw_line in page_text.split('\n'):
+                if not raw_line.strip():
+                    text_y += WORK_NOTE_LINE_HEIGHT // 2 # 空行縮短間距，做出段落間距的感覺
+                    continue
+                for line in wrap_text(raw_line, font_work_note, WORK_NOTE_CONTENT_WIDTH):
+                    line_surf = font_work_note.render(line, True, BLACK)
+                    screen.blit(line_surf, (WORK_NOTE_CONTENT_X, text_y))
+                    text_y += WORK_NOTE_LINE_HEIGHT
+
+            # 換頁箭頭跟頁碼，只能翻到 work_note_pages 裡已經寫入的頁面
+            draw_page_nav_arrow(work_note_prev_rect, -1, work_note_current_page > 0)
+            draw_page_nav_arrow(work_note_next_rect, 1, work_note_current_page < len(work_note_pages) - 1)
+            page_label_surf = font_handwriting_small.render(
+                f"{work_note_current_page + 1} / {len(work_note_pages)}", True, BLACK)
+            screen.blit(page_label_surf, page_label_surf.get_rect(
+                center=(WORK_NOTE_CONTENT_X + WORK_NOTE_CONTENT_WIDTH // 2, work_note_prev_rect.centery)))
+        else:
+            empty_surf = font_handwriting_small.render("（尚無記錄）", True, DARK_GRAY)
+            screen.blit(empty_surf, (WORK_NOTE_CONTENT_X, panel_rect.y + 66))
     else:
         title_surf = font_handwriting.render("操作手冊", True, BLACK)
         screen.blit(title_surf, (content_x, panel_rect.y + 24))
@@ -1662,6 +2009,7 @@ def draw_manual_screen():
             "F : 與場景互動",
             "B : 開啟背包",
             "L : 開關手電筒（需持有手電筒）",
+            "M : 開啟地圖",
             "TAB : 關閉此手冊",
             "ESC : 開啟選單"
         ]
@@ -1731,10 +2079,12 @@ def draw_carriage_scene(camera_offset_x, scene_name):
             chair_rect.midbottom = (pos - camera_offset_x, HEIGHT - FLOOR_HEIGHT + 20)
             screen.blit(chair_day_img, chair_rect)
     elif not is_day and chair_night_img and chair_night_positions:
-        # 晚上老太太不出現、不用跳過位置；小女孩、老維修員晚上還在，要跳過對應位置（用容許誤差比對，
-        # 因為晚上跟白天的座椅位置是分別計算的，不會完全一樣）
+        # 晚上老太太不出現、不用跳過位置；老維修員晚上還在，要跳過對應位置（用容許誤差比對，
+        # 因為晚上跟白天的座椅位置是分別計算的，不會完全一樣）。
+        # 小女孩只有「已經熄燈、恐怖事件還沒結束」這段期間才會出現在座位上，其餘時間（熄燈前、事件結束後）
+        # 座位要跟老太太一樣改畫空椅子，不能繼續跳過
         for pos in chair_night_positions:
-            if scene_name == GIRL_SCENE and abs(pos - GIRL_CHAIR_X) < 30:
+            if scene_name == GIRL_SCENE and abs(pos - GIRL_CHAIR_X) < 30 and lights_out and not horror_girl_event_done:
                 continue
             if scene_name == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX and abs(pos - OLD_WORKER_CHAIR_X) < 30:
                 continue
@@ -1855,8 +2205,11 @@ def draw_old_lady(camera_offset_x):
 
 
 def draw_girl(camera_offset_x):
-    """繪製小女孩 NPC（僅在車廂二場景顯示，用 little_girl.png 取代車廂二的第四張椅子）"""
+    """繪製小女孩 NPC（僅在車廂二場景顯示，用 little_girl.png 取代車廂二的第四張椅子）。
+    晚上時她只會在燈熄滅後才出現，恐怖事件結束（對話完）後就不會再出現了；白天不受影響，照常顯示。"""
     if current_scene != GIRL_SCENE:
+        return
+    if not is_daytime() and (not lights_out or horror_girl_event_done):
         return
     screen_rect = girl_rect.move(-camera_offset_x, 0)
     if little_girl_img:
@@ -2019,6 +2372,46 @@ def draw_bottom_f_hint(text):
     screen.blit(hint_surf, (hint_bg_rect.centerx - hint_surf.get_width() // 2, hint_bg_rect.centery - hint_surf.get_height() // 2))
 
 
+# --- 列車地圖（按 M 查看）：每個場景在 map.png 原始圖片裡對應的 x 座標範圍（測量自圖片本身），
+# 紅點會依照角色在該場景世界座標裡的比例位置，內插在這個範圍裡，跟著左右移動 ---
+MAP_SCENE_X_RANGES = {
+    'COCKPIT': (40, 285),
+    'CARRIAGE_1': (285, 605),
+    'CONNECTION_1': (605, 745),
+    'CARRIAGE_2': (745, 1045),
+    'CONNECTION_2': (1045, 1215), # 廁所
+    'CARRIAGE_3': (1215, 1520),
+    'CONNECTION_3': (1520, 1810), # 工具間
+    'CARRIAGE_4': (1810, 2130),
+}
+MAP_MARKER_Y_ORIGINAL = 315 # 紅點固定在這個原始圖片座標高度（走道的垂直中央）
+MAP_IMG_ORIGINAL_WIDTH = 2172
+
+
+def draw_map_screen():
+    """繪製列車地圖畫面：置中顯示 map.png，並用紅色圓點標示玩家目前在地圖上的位置"""
+    screen.fill(BLACK)
+    if map_img:
+        map_pos = ((WIDTH - map_img.get_width()) // 2, (HEIGHT - map_img.get_height()) // 2)
+        screen.blit(map_img, map_pos)
+
+        x_range = MAP_SCENE_X_RANGES.get(current_scene)
+        if x_range:
+            scale = map_img.get_width() / MAP_IMG_ORIGINAL_WIDTH
+            world_width = get_scene_width(current_scene)
+            ratio = (conductor_rect.centerx / world_width) if world_width else 0.5
+            ratio = max(0.0, min(1.0, ratio))
+            orig_x = x_range[0] + (x_range[1] - x_range[0]) * ratio
+            dot_x = map_pos[0] + orig_x * scale
+            dot_y = map_pos[1] + MAP_MARKER_Y_ORIGINAL * scale
+            pygame.draw.circle(screen, RED, (round(dot_x), round(dot_y)), 7)
+            pygame.draw.circle(screen, WHITE, (round(dot_x), round(dot_y)), 7, 2)
+
+    title_surf = font.render("列車地圖", True, WHITE)
+    screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, 12))
+    draw_bottom_f_hint("M : 關閉地圖")
+
+
 def draw_toilet_view():
     """繪製走進廁所後看到的畫面，底部顯示按 F 離開的提示"""
     if toilet_img:
@@ -2179,13 +2572,13 @@ def draw_day_title_card():
     else:
         alpha = 255
 
-    # 白天版的圖片是黑色毛筆字，要用亮色背景才看得清楚；晚上版是白色毛筆字，要用暗色背景
-    is_night_stage = day_title_card['stage'].endswith('NIGHT')
-    overlay_color = (0, 0, 0) if is_night_stage else (245, 240, 225)
-    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    overlay.fill((*overlay_color, round(140 * alpha / 255)))
-    screen.blit(overlay, (0, 0))
+    # 疊一層純黑背景做轉場的淡入淡出，把底下的場景畫面完全蓋掉，
+    # 營造「切到黑畫面 → 顯示標題卡 → 淡出回到新場景」的轉場效果
+    black_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    black_overlay.fill((0, 0, 0, alpha))
+    screen.blit(black_overlay, (0, 0))
 
+    is_night_stage = day_title_card['stage'].endswith('NIGHT')
     img = day_title_images.get(day_title_card['stage'])
     if img:
         img_copy = img.copy()
@@ -2211,16 +2604,28 @@ def draw_inventory_hint():
 
 
 def draw_flashlight_hint():
-    """如果玩家持有手電筒，在左上角顯示目前開關狀態"""
+    """如果玩家持有手電筒，在左上角顯示目前開關狀態；緊接在地圖提示下面"""
     if '老式手電筒' not in inventory:
         return
     status_text = "手電筒：開啟" if flashlight_on else "手電筒：關閉"
     hint_text_surf = font_small.render(status_text, True, WHITE)
     hint_rect = hint_text_surf.get_rect()
     hint_bg_rect = pygame.Rect(0, 0, hint_rect.width + 20, hint_rect.height + 12)
-    hint_bg_rect.topleft = (15, 55)
+    hint_bg_rect.topleft = (15, 95)
     hint_bg = pygame.Surface(hint_bg_rect.size, pygame.SRCALPHA)
     hint_bg.fill((200, 160, 60, 170) if flashlight_on else (0, 0, 0, 150))
+    screen.blit(hint_bg, hint_bg_rect)
+    screen.blit(hint_text_surf, (hint_bg_rect.centerx - hint_rect.width // 2, hint_bg_rect.centery - hint_rect.height // 2))
+
+
+def draw_map_hint():
+    """在左上角顯示提示：按 M 開關地圖，緊接在背包提示下面（手電筒提示改到地圖提示下面）"""
+    hint_text_surf = font_small.render("M : 地圖", True, WHITE)
+    hint_rect = hint_text_surf.get_rect()
+    hint_bg_rect = pygame.Rect(0, 0, hint_rect.width + 20, hint_rect.height + 12)
+    hint_bg_rect.topleft = (15, 55)
+    hint_bg = pygame.Surface(hint_bg_rect.size, pygame.SRCALPHA)
+    hint_bg.fill((0, 0, 0, 150))
     screen.blit(hint_bg, hint_bg_rect)
     screen.blit(hint_text_surf, (hint_bg_rect.centerx - hint_rect.width // 2, hint_bg_rect.centery - hint_rect.height // 2))
 
@@ -2305,6 +2710,8 @@ _flashlight_dark_img, _flashlight_glow_img, _flashlight_origin_local = _build_fl
 _flashlight_dark_img_flipped = pygame.transform.flip(_flashlight_dark_img, True, False)
 _flashlight_glow_img_flipped = pygame.transform.flip(_flashlight_glow_img, True, False)
 
+FLASHLIGHT_SWING_DURATION = sum(conductor_walk_durations) * 64 if conductor_walk_durations else 0 # 手電筒擺盪一次要花多少毫秒（直接用時長控制，不用再換算 phase 的係數）
+
 
 def draw_lights_out_overlay(camera_offset_x):
     """列車燈光熄滅期間，疊加更深的黑暗效果；若手電筒開啟，用預先算好的柔和漸層光束照亮角色前方，
@@ -2317,6 +2724,26 @@ def draw_lights_out_overlay(camera_offset_x):
     if flashlight_on and '老式手電筒' in inventory:
         origin_x = conductor_rect.centerx - camera_offset_x
         origin_y = conductor_rect.centery
+
+        # 只有真的在正常遊戲畫面時才會晃動；對話框顯示期間（例如回頭倒數的 "3"、"2"、"1"）
+        # 角色其實是靜止的，is_moving 可能還殘留移動前的舊值，手電筒不應該還在晃
+        if is_moving and game_state == 'PLAYING':
+            # 走路時手電筒跟著手部擺動晃一晃：快速的小晃動用畫面時間，弧形擺盪、上下彈跳
+            # 則用 flashlight_swing_timer（只在移動時累積、跟走路動畫一起歸零）換算的進度，
+            # 動畫時長由 FLASHLIGHT_SWING_DURATION 直接控制，好調整、好理解
+            t = pygame.time.get_ticks()
+            origin_x += math.sin(t / 100.0) * 5
+            origin_y += math.sin(t / 55.0) * 3
+            swing_progress = (flashlight_swing_timer / FLASHLIGHT_SWING_DURATION) if FLASHLIGHT_SWING_DURATION else 0
+            phase = 2 * math.pi * swing_progress
+            # 像鐘擺一樣的弧形擺盪軌跡，模擬手真的握著手電筒、手臂小幅度前後擺動的感覺
+            # （擺到兩側時光源會微微「抬高」一點，畫出一道弧線，不是單純的直線晃動）
+            arc_length = 10
+            arc_angle = math.sin(phase) * math.radians(12)
+            origin_x += math.sin(arc_angle) * arc_length
+            origin_y += (1 - math.cos(arc_angle)) * arc_length
+            # 上下起伏的弧狀彈跳軌跡，頻率是弧形擺盪的兩倍
+            origin_y -= abs(math.sin(phase)) * 4
 
         if facing_direction == 'LEFT':
             dark_surf, glow_surf = _flashlight_dark_img_flipped, _flashlight_glow_img_flipped
@@ -2335,16 +2762,34 @@ def draw_lights_out_overlay(camera_offset_x):
     screen.blit(overlay, (0, 0))
 
 
-def draw_lights_out_hint():
-    """第一天晚上事件期間，依目前階段顯示對應的任務指引：
-    巡視車廂 → （走到第四節車廂熄燈後）打開手電筒 → 返回駕駛室"""
-    if night1_patrol_active:
-        task_text = "任務：巡視車廂"
-    elif lights_out and not flashlight_on:
-        task_text = "任務：打開手電筒"
-    elif lights_out:
-        task_text = "任務：返回駕駛室"
-    else:
+def draw_task_hint():
+    """在畫面上方顯示目前的任務指引文字，依所在的天數／時段顯示不同內容：
+    第一天白天：探索車廂 → （碰過工具間的門後）找出工具間鑰匙 → （打開過操作台置物櫃門後，優先權更高）獲得螺絲起子
+    → （拿到螺絲起子後，優先權最高）打開上鎖的櫃子。
+    第一天晚上：巡視車廂 → （走到第四節車廂熄燈後）打開手電筒 → 返回駕駛室。
+    第二天白天：探索車廂 → （拿到舊路線圖後）尋找員工日誌。"""
+    current_stage = DAY_NIGHT_STAGES[day_night_index]
+    task_text = None
+    if current_stage == 'DAY1_DAY':
+        if SCREWDRIVER_TABLE_ITEM_NAME in inventory and not console_box_unlocked:
+            task_text = "任務：打開上鎖的櫃子"
+        elif discovered_console_box_locked and SCREWDRIVER_TABLE_ITEM_NAME not in inventory:
+            task_text = "任務：獲得螺絲起子"
+        elif discovered_toolroom_locked and TOOLROOM_KEY_ITEM_NAME not in inventory:
+            task_text = "任務：找出工具間鑰匙"
+        else:
+            task_text = "任務：探索車廂"
+    elif current_stage == 'DAY1_NIGHT':
+        if night1_patrol_active:
+            task_text = "任務：巡視車廂"
+        elif lights_out and not flashlight_on:
+            task_text = "任務：打開手電筒"
+        elif lights_out:
+            task_text = "任務：返回駕駛室"
+    elif current_stage == 'DAY2_DAY':
+        task_text = "任務：尋找員工日誌" if '舊路線圖' in inventory else "任務：探索車廂"
+
+    if not task_text:
         return
     hint_text_surf = font_small.render(task_text, True, WHITE)
     hint_rect = hint_text_surf.get_rect()
@@ -2388,6 +2833,34 @@ def wrap_text(text, render_font, max_width):
     return lines
 
 
+def paginate_work_note_text(text):
+    """把一天的工作日誌內容依照目前的字型／行距／頁面可用高度，自動切成好幾頁：
+    累加到超出 WORK_NOTE_MAX_TEXT_HEIGHT 時就切下一頁，而不是讓文字被截斷或擠出頁面範圍。
+    以原始一行（日記裡的一句）當作最小單位，不會拆到一半才換頁；回傳切好的頁面文字列表。"""
+    pages = []
+    current_lines = []
+    current_height = 0
+    for raw_line in text.split('\n'):
+        if not raw_line.strip():
+            entry_lines = ['']
+            entry_height = WORK_NOTE_LINE_HEIGHT // 2
+        else:
+            entry_lines = wrap_text(raw_line, font_work_note, WORK_NOTE_CONTENT_WIDTH)
+            entry_height = WORK_NOTE_LINE_HEIGHT * len(entry_lines)
+
+        if current_lines and current_height + entry_height > WORK_NOTE_MAX_TEXT_HEIGHT:
+            pages.append('\n'.join(current_lines))
+            current_lines = []
+            current_height = 0
+
+        current_lines.extend(entry_lines)
+        current_height += entry_height
+
+    if current_lines:
+        pages.append('\n'.join(current_lines))
+    return pages if pages else ['']
+
+
 def draw_dialogue_box():
     """繪製對話框（縮小成一半大小、圓角、手寫字體），顯示目前這句台詞（超過文字框寬度會自動換行）"""
     speaker, text = dialogue_lines[dialogue_index]
@@ -2421,14 +2894,14 @@ def draw_night1_choice():
     prompt_surf = font.render("要打開駕駛室的門嗎？", True, WHITE)
     screen.blit(prompt_surf, (WIDTH // 2 - prompt_surf.get_width() // 2, HEIGHT // 2 - 60))
 
-    pygame.draw.rect(screen, RED, night1_choice_open_rect)
-    pygame.draw.rect(screen, BLACK, night1_choice_open_rect, 3)
+    pygame.draw.rect(screen, RED, night1_choice_open_rect, border_radius=12)
+    pygame.draw.rect(screen, BLACK, night1_choice_open_rect, 3, border_radius=12)
     open_surf = font_small.render("開門", True, WHITE)
     screen.blit(open_surf, (night1_choice_open_rect.centerx - open_surf.get_width() // 2,
                             night1_choice_open_rect.centery - open_surf.get_height() // 2))
 
-    pygame.draw.rect(screen, (70, 90, 160), night1_choice_close_rect)
-    pygame.draw.rect(screen, BLACK, night1_choice_close_rect, 3)
+    pygame.draw.rect(screen, (70, 90, 160), night1_choice_close_rect, border_radius=12)
+    pygame.draw.rect(screen, BLACK, night1_choice_close_rect, 3, border_radius=12)
     close_surf = font_small.render("不開門", True, WHITE)
     screen.blit(close_surf, (night1_choice_close_rect.centerx - close_surf.get_width() // 2,
                              night1_choice_close_rect.centery - close_surf.get_height() // 2))
@@ -2460,6 +2933,13 @@ def draw_to_be_continued():
     screen.blit(text_surf, text_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
 
 
+def draw_jumpscare_screen():
+    """繪製第四次回頭後跳出來的驚嚇畫面（等比例縮放、置中，不拉伸變形）"""
+    screen.fill(BLACK)
+    if jumpscare_img:
+        screen.blit(jumpscare_img, ((WIDTH - jumpscare_img.get_width()) // 2, 0))
+
+
 def draw_game_over_screen():
     """繪製 Game Over 畫面"""
     screen.fill(BLACK)
@@ -2483,14 +2963,14 @@ def draw_story_choice():
     prompt_surf = font.render(choice_prompt, True, WHITE)
     screen.blit(prompt_surf, (WIDTH // 2 - prompt_surf.get_width() // 2, HEIGHT // 2 - 60))
 
-    pygame.draw.rect(screen, RED, choice_rect_a)
-    pygame.draw.rect(screen, BLACK, choice_rect_a, 3)
+    pygame.draw.rect(screen, RED, choice_rect_a, border_radius=12)
+    pygame.draw.rect(screen, BLACK, choice_rect_a, 3, border_radius=12)
     label_a_surf = font_small.render(choice_label_a, True, WHITE)
     screen.blit(label_a_surf, (choice_rect_a.centerx - label_a_surf.get_width() // 2,
                                choice_rect_a.centery - label_a_surf.get_height() // 2))
 
-    pygame.draw.rect(screen, (70, 90, 160), choice_rect_b)
-    pygame.draw.rect(screen, BLACK, choice_rect_b, 3)
+    pygame.draw.rect(screen, (70, 90, 160), choice_rect_b, border_radius=12)
+    pygame.draw.rect(screen, BLACK, choice_rect_b, 3, border_radius=12)
     label_b_surf = font_small.render(choice_label_b, True, WHITE)
     screen.blit(label_b_surf, (choice_rect_b.centerx - label_b_surf.get_width() // 2,
                                choice_rect_b.centery - label_b_surf.get_height() // 2))
@@ -2503,9 +2983,13 @@ def reset_game():
     global night1_pending_intro, night1_patrol_active
     global flashlight_on, facing_direction
     global has_guide, has_girl_painting, has_talked_to_old_lady, active_npc, manual_view
+    global manual_close_transition, work_note_pages, work_note_current_page
     global dialogue_lines, dialogue_index, game_over_reason, intro_monologue_shown
     global console_box_screws, console_box_unlocked, screw_removal_anim, current_luggage_rack_key
-    global horror_girl_singing_channel, horror_girl_scream_channel
+    global horror_girl_singing_channel, horror_girl_scream_channel, horror_girl_event_done
+    global discovered_toolroom_locked, discovered_console_box_locked
+    global turn_around_count, last_facing_direction_for_turn_check, jumpscare_shown_start_time
+    global jumpscare_pending, jumpscare_laugh_channel
 
     conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - CONDUCTOR_SIZE - 10
     conductor_rect.y = HEIGHT - FLOOR_HEIGHT - CONDUCTOR_SIZE + CONDUCTOR_Y_OFFSET
@@ -2530,6 +3014,9 @@ def reset_game():
     intro_monologue_shown = False
     active_npc = None
     manual_view = 'MANUAL'
+    manual_close_transition = None
+    work_note_pages = []
+    work_note_current_page = 0
     dialogue_lines = []
     dialogue_index = 0
 
@@ -2547,6 +3034,18 @@ def reset_game():
         horror_girl_singing_channel.stop()
     horror_girl_singing_channel = None
     horror_girl_scream_channel = None
+    horror_girl_event_done = False
+
+    discovered_toolroom_locked = False
+    discovered_console_box_locked = False
+
+    turn_around_count = 0
+    last_facing_direction_for_turn_check = None
+    jumpscare_pending = False
+    if jumpscare_laugh_channel:
+        jumpscare_laugh_channel.stop()
+    jumpscare_laugh_channel = None
+    jumpscare_shown_start_time = 0
 
 
 def draw_conductor(surface, rect, image, camera_offset_x):
@@ -2568,7 +3067,7 @@ def draw_interact_hint(camera_offset_x):
     if not lights_out:
         if current_scene == OLD_LADY_SCENE and is_daytime():
             interactables.append(old_lady_interact_rect)
-        if current_scene == GIRL_SCENE:
+        if current_scene == GIRL_SCENE and is_daytime():
             interactables.append(girl_interact_rect)
         if current_scene == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX:
             interactables.append(old_worker_interact_rect)
@@ -2583,6 +3082,9 @@ def draw_interact_hint(camera_offset_x):
             interactables.append(toilet_interact_rect)
         if current_scene == TOOLROOM_SCENE:
             interactables.append(toolroom_interact_rect)
+    elif flashlight_on and not horror_girl_event_done and current_scene == GIRL_SCENE:
+        # 晚上熄燈後，手電筒照到小女孩時（範圍內、手電筒已開、事件還沒發生過）要有光點標記，提示可以互動
+        interactables.append(girl_interact_rect)
 
     interactables = [rect for rect in interactables if conductor_rect.colliderect(rect)] # 只保留角色目前站在範圍內的
 
@@ -2603,11 +3105,30 @@ def draw_interact_hint(camera_offset_x):
         screen.blit(glow_icon, glow_icon.get_rect(center=marker_pos))
 
 
+def draw_luggage_rack_hover(camera_offset_x):
+    """滑鼠移到互動範圍內的行李架上時（畫面上方大概 1/3、角色也要站在範圍內，
+    條件跟實際點擊判定一致），該行李架固定的位置上會出現一個白色光點，提示這裡可以點擊查看
+    （光點固定在行李架上，不會跟著滑鼠游標跑）"""
+    if lights_out or current_scene not in LUGGAGE_RACK_SCENES or not interact_spot_icon:
+        return
+    mouse_pos = to_logical_pos(pygame.mouse.get_pos())
+    if mouse_pos[1] >= HEIGHT / 3:
+        return
+    for rect in luggage_rack_interact_rects:
+        if not conductor_rect.colliderect(rect):
+            continue
+        screen_rect = rect.move(-camera_offset_x, 0)
+        if screen_rect.collidepoint(mouse_pos):
+            screen.blit(interact_spot_icon, interact_spot_icon.get_rect(center=screen_rect.center))
+            break
+
+
 def try_interact(click_pos=None):
     """檢查角色目前是否在某個可互動範圍內，是的話就觸發對應的互動
     （NPC對話、撿道具、開櫃子、開門、切換場景等）。按 F 鍵或滑鼠左鍵都會呼叫這個函式；
     click_pos 是滑鼠左鍵點擊當下的邏輯座標（按 F 鍵觸發時沒有點擊位置，傳入 None）。"""
     global dialogue_lines, dialogue_index, active_npc, game_state, current_luggage_rack_key, horror_girl_singing_channel
+    global discovered_toolroom_locked
 
     matched_rack_index = None
     if not lights_out and current_scene in LUGGAGE_RACK_SCENES:
@@ -2634,14 +3155,15 @@ def try_interact(click_pos=None):
         dialogue_index = 0
         active_npc = 'OLD_LADY'
         game_state = 'DIALOGUE'
-    elif not lights_out and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_interact_rect):
+    elif is_daytime() and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_interact_rect):
         # 與小女孩互動，開始對話（已經拿過畫的話改播重複對話）
         dialogue_lines = girl_dialogue_repeat if has_girl_painting else girl_dialogue
         dialogue_index = 0
         active_npc = 'GIRL'
         game_state = 'DIALOGUE'
-    elif lights_out and flashlight_on and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_interact_rect):
-        # 晚上打開手電筒後在小女孩座位遇到她，觸發恐怖事件
+    elif (lights_out and flashlight_on and not horror_girl_event_done
+          and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_interact_rect)):
+        # 晚上打開手電筒後在小女孩座位遇到她，觸發恐怖事件（只會發生一次，事件結束後她就不會再出現了）
         if horror_girl_singing_sound:
             horror_girl_singing_channel = horror_girl_singing_sound.play(loops=-1)
         dialogue_lines = horror_girl_talk_lines
@@ -2671,13 +3193,14 @@ def try_interact(click_pos=None):
         # 查看駕駛室櫃子內部
         game_state = 'CASE_VIEW'
     elif not lights_out and current_scene == TOILET_SCENE and conductor_rect.colliderect(toilet_interact_rect):
-        # 走進廁所
-        game_state = 'TOILET_VIEW'
+        # 走進廁所前，先播放開門過場
+        start_door_open_transition(open_toilet_img, 'TOILET_VIEW')
     elif not lights_out and current_scene == TOOLROOM_SCENE and conductor_rect.colliderect(toolroom_interact_rect):
         if TOOLROOM_KEY_ITEM_NAME in inventory:
-            # 走進工具間
-            game_state = 'TOOLROOM_VIEW'
+            # 走進工具間前，先播放開門過場
+            start_door_open_transition(open_toolroom_img, 'TOOLROOM_VIEW')
         else:
+            discovered_toolroom_locked = True # 任務指引改成提示找出工具間鑰匙
             dialogue_lines = [(" ", "門鎖住了，需要工具間鑰匙才能進去。")]
             dialogue_index = 0
             active_npc = None
@@ -2693,6 +3216,20 @@ dt = 0 # 每一幀經過的毫秒數，供走路動畫計時使用
 running = True
 while running:
     update_background_music()
+
+    if game_state != 'PLAYING' and footstep_timer != 0:
+        # 離開遊戲場景（對話、選單、特寫畫面等）時，下次回來走路要重新從頭計時
+        footstep_timer = 0
+
+    if jumpscare_pending:
+        # 第四次回頭後的背景偵測：不管玩家目前在哪個畫面（正常遊戲、對話、手冊、背包、暫停選單……）都持續檢查，
+        # 笑聲一播完就立刻強制切到驚嚇畫面，玩家躲不掉、UI 也完全不受影響
+        if jumpscare_laugh_channel is None or not jumpscare_laugh_channel.get_busy():
+            jumpscare_pending = False
+            if jumpscare_sound:
+                jumpscare_sound.play()
+            jumpscare_shown_start_time = pygame.time.get_ticks()
+            game_state = 'JUMPSCARE'
 
     if game_state == 'START':
         # --- 開始畫面的事件與繪圖 ---
@@ -2751,7 +3288,18 @@ while running:
                 running = False
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_TAB, pygame.K_SPACE, pygame.K_ESCAPE):
-                    if not intro_monologue_shown:
+                    if manual_close_transition == 'DAY2_DAY':
+                        # 第一天結束、看完工作日誌後關閉手冊，接著切到第二天白天
+                        manual_close_transition = None
+                        day_night_index = DAY_NIGHT_STAGES.index('DAY2_DAY')
+                        show_day_title_card('DAY2_DAY')
+                        game_state = 'PLAYING'
+                    elif manual_close_transition == 'TO_BE_CONTINUED':
+                        # 第二天結束、看完工作日誌後關閉手冊，接著進入「未完待續」畫面
+                        manual_close_transition = None
+                        to_be_continued_start_time = pygame.time.get_ticks()
+                        game_state = 'TO_BE_CONTINUED'
+                    elif not intro_monologue_shown:
                         # 第一次關閉手冊，先播放主角的開場自白，播完才進入遊戲
                         intro_monologue_shown = True
                         dialogue_lines = intro_monologue_lines
@@ -2767,12 +3315,25 @@ while running:
                         game_state = 'DIALOGUE'
                     else:
                         game_state = 'PLAYING'
+                elif manual_view == 'WORK_NOTE' and event.key in (pygame.K_LEFT, pygame.K_a):
+                    if work_note_current_page > 0:
+                        work_note_current_page -= 1
+                elif manual_view == 'WORK_NOTE' and event.key in (pygame.K_RIGHT, pygame.K_d):
+                    if work_note_current_page < len(work_note_pages) - 1:
+                        work_note_current_page += 1
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_pos = to_logical_pos(event.pos)
                 if manual_tab_manual_rect.collidepoint(mouse_pos):
                     manual_view = 'MANUAL'
                 elif has_guide and manual_tab_guide_rect.collidepoint(mouse_pos):
                     manual_view = 'GUIDE'
+                elif manual_tab_work_note_rect.collidepoint(mouse_pos):
+                    manual_view = 'WORK_NOTE'
+                elif manual_view == 'WORK_NOTE' and work_note_prev_rect.collidepoint(mouse_pos) and work_note_current_page > 0:
+                    work_note_current_page -= 1
+                elif (manual_view == 'WORK_NOTE' and work_note_next_rect.collidepoint(mouse_pos)
+                      and work_note_current_page < len(work_note_pages) - 1):
+                    work_note_current_page += 1
 
         # 繪製背景遊戲畫面
         draw_background(camera_x)
@@ -2794,6 +3355,8 @@ while running:
                 if event.key == pygame.K_b:
                     inventory_scroll_offset = 0
                     game_state = 'INVENTORY'
+                if event.key == pygame.K_m:
+                    game_state = 'MAP'
                 if event.key == pygame.K_l and '老式手電筒' in inventory:
                     flashlight_on = not flashlight_on
                 if event.key == pygame.K_f:
@@ -2813,6 +3376,26 @@ while running:
             conductor_rect.x += PLAYER_SPEED
             facing_direction = 'RIGHT'
             is_moving = True
+
+        # 熄燈後「回頭」驚嚇事件：面向反轉一次算回頭一次，前三次跳倒數對話框，第四次觸發驚嚇
+        if lights_out:
+            if last_facing_direction_for_turn_check is None:
+                last_facing_direction_for_turn_check = facing_direction
+            elif facing_direction != last_facing_direction_for_turn_check:
+                last_facing_direction_for_turn_check = facing_direction
+                turn_around_count += 1
+                if turn_around_count < TURN_AROUND_JUMPSCARE_THRESHOLD:
+                    dialogue_lines = [("???", str(TURN_AROUND_JUMPSCARE_THRESHOLD - turn_around_count))]
+                    dialogue_index = 0
+                    active_npc = None
+                    game_state = 'DIALOGUE'
+                else:
+                    # 不切換 game_state：讓玩家可以繼續正常遊玩、使用所有介面（手冊、背包、暫停選單等），
+                    # 笑聲一播完，會在主迴圈最上面自動強制跳轉到驚嚇畫面，不管玩家當時在做什麼
+                    jumpscare_pending = True
+                    jumpscare_laugh_channel = jumpscare_laugh_sound.play() if jumpscare_laugh_sound else None
+        else:
+            last_facing_direction_for_turn_check = None
 
         # 車廂之間直接穿越，不用開門：角色走到門的範圍就自動切換到下一個／上一個場景；
         # 沒有門的地方（例如頭尾車廂的盡頭）維持原本的邊界限制，用角色實際可見的範圍
@@ -2853,6 +3436,24 @@ while running:
 
             current_frame = conductor_walk_frames[conductor_anim_index]
             conductor_img = pygame.transform.flip(current_frame, True, False) if facing_direction == 'RIGHT' else current_frame
+
+        # 手電筒弧形擺盪／上下彈跳的計時器，只在移動時累積、超過一輪擺盪時長就繞回開頭，停下就歸零
+        if is_moving and FLASHLIGHT_SWING_DURATION:
+            flashlight_swing_timer = (flashlight_swing_timer + dt) % FLASHLIGHT_SWING_DURATION
+        else:
+            flashlight_swing_timer = 0
+
+        # 走路腳步聲：角色移動時依固定間隔輪流播放切好的腳步聲，開始移動就立刻先響一聲，
+        # 之後每隔 FOOTSTEP_INTERVAL 毫秒播下一顆（播完 4 顆後從頭循環），停下腳步就歸零
+        if is_moving and footstep_sounds:
+            footstep_timer -= dt
+            if footstep_timer <= 0:
+                footstep_sounds[footstep_play_index % len(footstep_sounds)].play()
+                footstep_play_index += 1
+                footstep_timer = FOOTSTEP_INTERVAL
+        else:
+            footstep_timer = 0
+            footstep_play_index = 0
 
         camera_x = conductor_rect.centerx - (WIDTH // 2)
         if current_world_width <= WIDTH:
@@ -2897,11 +3498,13 @@ while running:
         draw_night_overlay()
         draw_lights_out_overlay(camera_x)
         draw_interact_hint(camera_x)
+        draw_luggage_rack_hover(camera_x)
         draw_manual_hint()
         draw_inventory_hint()
+        draw_map_hint()
         draw_flashlight_hint()
         draw_time_label()
-        draw_lights_out_hint()
+        draw_task_hint()
 
     elif game_state == 'PAUSE_MENU':
         # --- 暫停選單的事件與繪圖 ---
@@ -2988,9 +3591,14 @@ while running:
                     elif active_npc == 'NIGHT1_OUTRO':
                         active_npc = None
                         day1_night_resolved = True
-                        day_night_index = DAY_NIGHT_STAGES.index('DAY2_DAY') # 劇情結束後直接跳到第二天白天
-                        show_day_title_card('DAY2_DAY')
-                        game_state = 'PLAYING'
+                        # 第一天結束，把工作日誌第一天的內容寫進去（太長會自動切成好幾頁），
+                        # 跳出手冊停在新寫入的第一頁，關閉手冊後（見 MANUAL 狀態的處理）才接著切到第二天白天
+                        day1_start_page = len(work_note_pages)
+                        work_note_pages.extend(paginate_work_note_text(WORK_NOTE_DAY1_TEXT))
+                        work_note_current_page = day1_start_page
+                        manual_view = 'WORK_NOTE'
+                        manual_close_transition = 'DAY2_DAY'
+                        game_state = 'MANUAL'
                     elif active_npc == 'NIGHT1_CAUGHT':
                         active_npc = None
                         game_over_reason = "你打開了門，被那個「多出來的人」發現了。"
@@ -3011,8 +3619,16 @@ while running:
                         )
                     elif active_npc == 'NIGHT2_SAFE':
                         active_npc = None
-                        to_be_continued_start_time = pygame.time.get_ticks()
-                        game_state = 'TO_BE_CONTINUED'
+                        # 第二天結束：day2、day2-2 其實是同一篇日記（原始照片分成兩張），接在一起
+                        # 當成一整篇內容寫進工作日誌（太長會自動切成好幾頁），跳出手冊停在新寫入的第一頁，
+                        # 關閉手冊後（見 MANUAL 狀態的處理）才接著進入「未完待續」畫面
+                        day2_start_page = len(work_note_pages)
+                        day2_full_text = WORK_NOTE_DAY2_TEXT.rstrip('\n') + '\n' + WORK_NOTE_DAY2_2_TEXT
+                        work_note_pages.extend(paginate_work_note_text(day2_full_text))
+                        work_note_current_page = day2_start_page
+                        manual_view = 'WORK_NOTE'
+                        manual_close_transition = 'TO_BE_CONTINUED'
+                        game_state = 'MANUAL'
                     elif active_npc == 'NIGHT2_CAUGHT':
                         active_npc = None
                         game_over_reason = "你打開了車門，月台上的人朝你走了過來。"
@@ -3097,6 +3713,7 @@ while running:
             if advance_dialogue:
                 dialogue_index += 1
                 if dialogue_index >= len(dialogue_lines):
+                    horror_girl_event_done = True # 事件結束，小女孩晚上不會再出現、不能再互動
                     game_state = 'PLAYING'
 
         screen.fill(BLACK)
@@ -3104,6 +3721,18 @@ while running:
             screen.blit(horror_girl_smile_img, ((WIDTH - horror_girl_smile_img.get_width()) // 2, 0))
         if game_state == 'HORROR_GIRL_REACT':
             draw_dialogue_box()
+
+    elif game_state == 'JUMPSCARE':
+        # --- 驚嚇畫面：跳出 jumpscare.png，停留一小段時間後進入 GAME OVER ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+        draw_jumpscare_screen()
+
+        if pygame.time.get_ticks() - jumpscare_shown_start_time >= JUMPSCARE_HOLD_DURATION:
+            game_over_reason = "你回頭了。那個東西也看著你，然後抓住了你。"
+            game_state = 'GAME_OVER'
 
     elif game_state == 'NIGHT1_CHOICE':
         # --- 第一天晚上「開門／不開門」選擇畫面的事件與繪圖 ---
@@ -3193,6 +3822,17 @@ while running:
         draw_night_overlay()
         draw_inventory_screen()
 
+    elif game_state == 'MAP':
+        # --- 地圖畫面的事件與繪圖 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_m or event.key == pygame.K_ESCAPE:
+                    game_state = 'PLAYING'
+
+        draw_map_screen()
+
     elif game_state == 'CONSOLE_FOCUS':
         # --- 操作台細節畫面的事件與繪圖 ---
         for event in pygame.event.get():
@@ -3204,6 +3844,8 @@ while running:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_pos = to_logical_pos(event.pos)
                 if console_cabinet_door_rect.collidepoint(mouse_pos):
+                    if not console_box_unlocked:
+                        discovered_console_box_locked = True # 任務指引改成提示獲得螺絲起子（優先權比工具間鑰匙高）
                     game_state = 'BOX_VIEW'
 
         draw_console_focus()
@@ -3242,6 +3884,14 @@ while running:
                 console_box_unlocked = True
 
         draw_box_view()
+
+    elif game_state == 'DOOR_OPENING':
+        # --- 走進廁所／工具間前的開門過場：淡入、停留一下就自動接到內部畫面，不能按鍵跳過 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+        draw_door_open_transition()
 
     elif game_state == 'TOILET_VIEW':
         # --- 廁所內部畫面的事件與繪圖 ---
