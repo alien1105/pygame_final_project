@@ -225,6 +225,21 @@ horror_girl_singing_channel = None # 目前正在播放哼歌音效的聲道，�
 horror_girl_scream_channel = None # 目前正在播放尖叫音效的聲道，用來偵測音效是否播完
 horror_girl_event_done = False # 恐怖事件是否已經結束：結束後小女孩晚上就不會再出現、不能再互動
 
+# 晚上熄燈後「回頭」驚嚇事件的音效（第四次回頭的陰森笑聲、最後跳出來的驚嚇音效）
+JUMPSCARE_LAUGH_BASE_VOLUME = 1.0
+JUMPSCARE_BASE_VOLUME = 1.0
+try:
+    jumpscare_laugh_sound = pygame.mixer.Sound(os.path.join('sound', 'jumpscare_laugh.mp3'))
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入音效 'jumpscare_laugh.mp3': {e}")
+    jumpscare_laugh_sound = None
+try:
+    jumpscare_sound = pygame.mixer.Sound(os.path.join('sound', 'jumpscare.mp3'))
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入音效 'jumpscare.mp3': {e}")
+    jumpscare_sound = None
+
+
 def load_walking_footstep_sounds(filename, volume):
     """把整段走路音效切割成一顆一顆單獨的腳步聲：先算出音量的震幅包絡線，抓出每一次腳踩地的爆音時間點，
     再依照這些時間點把音檔切成一小段一小段，回傳切好的腳步聲列表。
@@ -293,13 +308,17 @@ current_music_key = None # 目前正在播放的音樂鍵值，None 表示沒有
 
 def apply_sound_effect_volumes():
     """依照目前的音量設定（music_volume），同步調整所有音效的音量
-    （腳步聲、恐怖事件的哼歌／尖叫），不是只調整背景音樂"""
+    （腳步聲、恐怖事件的哼歌／尖叫、回頭驚嚇事件的音效），不是只調整背景音樂"""
     for footstep_sound in footstep_sounds:
         footstep_sound.set_volume(FOOTSTEP_BASE_VOLUME * music_volume)
     if horror_girl_singing_sound:
         horror_girl_singing_sound.set_volume(HORROR_SINGING_BASE_VOLUME * music_volume)
     if little_girl_scream_sound:
         little_girl_scream_sound.set_volume(HORROR_SCREAM_BASE_VOLUME * music_volume)
+    if jumpscare_laugh_sound:
+        jumpscare_laugh_sound.set_volume(JUMPSCARE_LAUGH_BASE_VOLUME * music_volume)
+    if jumpscare_sound:
+        jumpscare_sound.set_volume(JUMPSCARE_BASE_VOLUME * music_volume)
 
 
 apply_sound_effect_volumes() # 套用一次預設音量，讓音效跟背景音樂的預設大小一致
@@ -624,6 +643,15 @@ except pygame.error as e:
     print("請確認 'horror_girl_smile.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用黑色背景作為替代。")
     horror_girl_smile_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入晚上熄燈後「回頭」驚嚇事件的畫面，做法跟其他特寫畫面一樣：等比例縮放，不拉伸變形
+try:
+    jumpscare_img = load_height_locked_image('jumpscare.png')
+except pygame.error as e:
+    print(f"無法載入圖片 'jumpscare.png': {e}")
+    print("請確認 'jumpscare.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    jumpscare_img = None # 如果圖片載入失敗，設定為 None
 
 # 載入第二天晚上「不存在的月台」劇情裡穿插的月台照片，做法跟其他特寫畫面一樣：等比例縮放，不拉伸變形
 night2_station_images = {}
@@ -1022,6 +1050,16 @@ lights_out = False # 列車燈光是否熄滅中，此時任務指引是先打�
 flashlight_on = False # 手電筒是否開啟中（需持有「老式手電筒」才能開關）
 facing_direction = 'RIGHT' # 角色目前面向，決定手電筒照亮的方向
 
+# --- 熄燈後「回頭」驚嚇事件：熄燈期間，角色面向每反轉一次就算「回頭」一次，
+# 前三次會有 "???" 倒數 "3"、"2"、"1" 的對話框，第四次觸發驚嚇畫面、GAME OVER ---
+TURN_AROUND_JUMPSCARE_THRESHOLD = 4 # 第幾次回頭會觸發驚嚇
+JUMPSCARE_HOLD_DURATION = 2500 # 驚嚇畫面顯示這麼多毫秒後才進入 GAME OVER
+turn_around_count = 0 # 熄燈期間已經回頭幾次
+last_facing_direction_for_turn_check = None # 上一次檢查時的面向；熄燈開始時才會設定，用來偵測「反轉」
+jumpscare_pending = False # 第四次回頭後變 True：不切換畫面、玩家可以照常操作，背景默默偵測笑聲有沒有播完
+jumpscare_laugh_channel = None # 正在播放的笑聲聲道，笑聲一播完就立刻觸發驚嚇畫面
+jumpscare_shown_start_time = 0 # 驚嚇畫面開始顯示的時間，用來計算多久後進入 GAME OVER
+
 # --- 走路動畫 ---
 conductor_anim_index = 0 # 目前播放到走路動畫的第幾格
 conductor_anim_timer = 0 # 累積經過的毫秒數，用來判斷何時切換下一格
@@ -1328,6 +1366,7 @@ SPEAKER_COLORS = {
     "老維修員": WORKER_COLOR,
     "我": BLUE,
     "旁白": DARK_GRAY,
+    "???": (150, 0, 0),
 }
 
 # --- 對話狀態管理 ---
@@ -2470,7 +2509,9 @@ def draw_lights_out_overlay(camera_offset_x):
         origin_x = conductor_rect.centerx - camera_offset_x
         origin_y = conductor_rect.centery
 
-        if is_moving:
+        # 只有真的在正常遊戲畫面時才會晃動；對話框顯示期間（例如回頭倒數的 "3"、"2"、"1"）
+        # 角色其實是靜止的，is_moving 可能還殘留移動前的舊值，手電筒不應該還在晃
+        if is_moving and game_state == 'PLAYING':
             # 走路時手電筒跟著手部擺動晃一晃：快速的小晃動用畫面時間，弧形擺盪、上下彈跳
             # 則用 flashlight_swing_timer（只在移動時累積、跟走路動畫一起歸零）換算的進度，
             # 動畫時長由 FLASHLIGHT_SWING_DURATION 直接控制，好調整、好理解
@@ -2648,6 +2689,13 @@ def draw_to_be_continued():
     screen.blit(text_surf, text_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
 
 
+def draw_jumpscare_screen():
+    """繪製第四次回頭後跳出來的驚嚇畫面（等比例縮放、置中，不拉伸變形）"""
+    screen.fill(BLACK)
+    if jumpscare_img:
+        screen.blit(jumpscare_img, ((WIDTH - jumpscare_img.get_width()) // 2, 0))
+
+
 def draw_game_over_screen():
     """繪製 Game Over 畫面"""
     screen.fill(BLACK)
@@ -2695,6 +2743,8 @@ def reset_game():
     global console_box_screws, console_box_unlocked, screw_removal_anim, current_luggage_rack_key
     global horror_girl_singing_channel, horror_girl_scream_channel, horror_girl_event_done
     global discovered_toolroom_locked, discovered_console_box_locked
+    global turn_around_count, last_facing_direction_for_turn_check, jumpscare_shown_start_time
+    global jumpscare_pending, jumpscare_laugh_channel
 
     conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - CONDUCTOR_SIZE - 10
     conductor_rect.y = HEIGHT - FLOOR_HEIGHT - CONDUCTOR_SIZE + CONDUCTOR_Y_OFFSET
@@ -2740,6 +2790,14 @@ def reset_game():
 
     discovered_toolroom_locked = False
     discovered_console_box_locked = False
+
+    turn_around_count = 0
+    last_facing_direction_for_turn_check = None
+    jumpscare_pending = False
+    if jumpscare_laugh_channel:
+        jumpscare_laugh_channel.stop()
+    jumpscare_laugh_channel = None
+    jumpscare_shown_start_time = 0
 
 
 def draw_conductor(surface, rect, image, camera_offset_x):
@@ -2915,6 +2973,16 @@ while running:
         # 離開遊戲場景（對話、選單、特寫畫面等）時，下次回來走路要重新從頭計時
         footstep_timer = 0
 
+    if jumpscare_pending:
+        # 第四次回頭後的背景偵測：不管玩家目前在哪個畫面（正常遊戲、對話、手冊、背包、暫停選單……）都持續檢查，
+        # 笑聲一播完就立刻強制切到驚嚇畫面，玩家躲不掉、UI 也完全不受影響
+        if jumpscare_laugh_channel is None or not jumpscare_laugh_channel.get_busy():
+            jumpscare_pending = False
+            if jumpscare_sound:
+                jumpscare_sound.play()
+            jumpscare_shown_start_time = pygame.time.get_ticks()
+            game_state = 'JUMPSCARE'
+
     if game_state == 'START':
         # --- 開始畫面的事件與繪圖 ---
         for event in pygame.event.get():
@@ -3034,6 +3102,26 @@ while running:
             conductor_rect.x += PLAYER_SPEED
             facing_direction = 'RIGHT'
             is_moving = True
+
+        # 熄燈後「回頭」驚嚇事件：面向反轉一次算回頭一次，前三次跳倒數對話框，第四次觸發驚嚇
+        if lights_out:
+            if last_facing_direction_for_turn_check is None:
+                last_facing_direction_for_turn_check = facing_direction
+            elif facing_direction != last_facing_direction_for_turn_check:
+                last_facing_direction_for_turn_check = facing_direction
+                turn_around_count += 1
+                if turn_around_count < TURN_AROUND_JUMPSCARE_THRESHOLD:
+                    dialogue_lines = [("???", str(TURN_AROUND_JUMPSCARE_THRESHOLD - turn_around_count))]
+                    dialogue_index = 0
+                    active_npc = None
+                    game_state = 'DIALOGUE'
+                else:
+                    # 不切換 game_state：讓玩家可以繼續正常遊玩、使用所有介面（手冊、背包、暫停選單等），
+                    # 笑聲一播完，會在主迴圈最上面自動強制跳轉到驚嚇畫面，不管玩家當時在做什麼
+                    jumpscare_pending = True
+                    jumpscare_laugh_channel = jumpscare_laugh_sound.play() if jumpscare_laugh_sound else None
+        else:
+            last_facing_direction_for_turn_check = None
 
         # 車廂之間直接穿越，不用開門：角色走到門的範圍就自動切換到下一個／上一個場景；
         # 沒有門的地方（例如頭尾車廂的盡頭）維持原本的邊界限制，用角色實際可見的範圍
@@ -3345,6 +3433,18 @@ while running:
             screen.blit(horror_girl_smile_img, ((WIDTH - horror_girl_smile_img.get_width()) // 2, 0))
         if game_state == 'HORROR_GIRL_REACT':
             draw_dialogue_box()
+
+    elif game_state == 'JUMPSCARE':
+        # --- 驚嚇畫面：跳出 jumpscare.png，停留一小段時間後進入 GAME OVER ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+        draw_jumpscare_screen()
+
+        if pygame.time.get_ticks() - jumpscare_shown_start_time >= JUMPSCARE_HOLD_DURATION:
+            game_over_reason = "你回頭了。那個東西也看著你，然後抓住了你。"
+            game_state = 'GAME_OVER'
 
     elif game_state == 'NIGHT1_CHOICE':
         # --- 第一天晚上「開門／不開門」選擇畫面的事件與繪圖 ---
