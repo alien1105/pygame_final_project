@@ -2729,6 +2729,24 @@ def draw_interact_hint(camera_offset_x):
         screen.blit(glow_icon, glow_icon.get_rect(center=marker_pos))
 
 
+def draw_luggage_rack_hover(camera_offset_x):
+    """滑鼠移到互動範圍內的行李架上時（畫面上方大概 1/3、角色也要站在範圍內，
+    條件跟實際點擊判定一致），該行李架固定的位置上會出現一個白色光點，提示這裡可以點擊查看
+    （光點固定在行李架上，不會跟著滑鼠游標跑）"""
+    if lights_out or current_scene not in LUGGAGE_RACK_SCENES or not interact_spot_icon:
+        return
+    mouse_pos = to_logical_pos(pygame.mouse.get_pos())
+    if mouse_pos[1] >= HEIGHT / 3:
+        return
+    for rect in luggage_rack_interact_rects:
+        if not conductor_rect.colliderect(rect):
+            continue
+        screen_rect = rect.move(-camera_offset_x, 0)
+        if screen_rect.collidepoint(mouse_pos):
+            screen.blit(interact_spot_icon, interact_spot_icon.get_rect(center=screen_rect.center))
+            break
+
+
 def try_interact(click_pos=None):
     """檢查角色目前是否在某個可互動範圍內，是的話就觸發對應的互動
     （NPC對話、撿道具、開櫃子、開門、切換場景等）。按 F 鍵或滑鼠左鍵都會呼叫這個函式；
@@ -3040,6 +3058,7 @@ while running:
         draw_night_overlay()
         draw_lights_out_overlay(camera_x)
         draw_interact_hint(camera_x)
+        draw_luggage_rack_hover(camera_x)
         draw_manual_hint()
         draw_inventory_hint()
         draw_flashlight_hint()
