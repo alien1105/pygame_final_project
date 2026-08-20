@@ -544,6 +544,15 @@ except pygame.error as e:
     print("將改用黑色背景作為替代。")
     toilet_img = None # 如果圖片載入失敗，設定為 None
 
+# 載入走進廁所前，手伸向門把開門的過場圖片，做法跟其他特寫畫面一樣：等比例縮放，不拉伸變形
+try:
+    open_toilet_img = load_height_locked_image('open_toilet.png')
+except pygame.error as e:
+    print(f"無法載入圖片 'open_toilet.png': {e}")
+    print("請確認 'open_toilet.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    open_toilet_img = None # 如果圖片載入失敗，設定為 None
+
 # 載入工具間內部、工作桌特寫圖片，做法跟廁所一樣：等比例縮放，不拉伸變形
 try:
     toolroom_img = load_height_locked_image('toolroom.png')
@@ -552,6 +561,15 @@ except pygame.error as e:
     print("請確認 'toolroom.png' 檔案與 main.py 在同一個資料夾中。")
     print("將改用黑色背景作為替代。")
     toolroom_img = None # 如果圖片載入失敗，設定為 None
+
+# 載入走進工具間前的開門過場圖片，做法跟廁所一樣
+try:
+    open_toolroom_img = load_height_locked_image('open_toolroom.png')
+except pygame.error as e:
+    print(f"無法載入圖片 'open_toolroom.png': {e}")
+    print("請確認 'open_toolroom.png' 檔案與 main.py 在同一個資料夾中。")
+    print("將改用黑色背景作為替代。")
+    open_toolroom_img = None # 如果圖片載入失敗，設定為 None
 
 try:
     tooltable_img = load_height_locked_image('tooltable.png')
@@ -1463,6 +1481,40 @@ toilet_interact_rect.centerx = (connect_toilet_day_img.get_width() if connect_to
 TOOLROOM_SCENE = 'CONNECTION_3'
 toolroom_interact_rect = pygame.Rect(0, HEIGHT - FLOOR_HEIGHT - 180, 100, 180) # 對應圖片中間的工具間門
 toolroom_interact_rect.centerx = (connect_toolroom_day_img.get_width() if connect_toolroom_day_img else CONNECTION_WIDTH) // 2
+
+# 走進廁所／工具間之前，先顯示一張手伸向門把開門的過場圖片，淡入、停留一下再自動接到內部畫面
+DOOR_OPEN_FADE_IN = 250
+DOOR_OPEN_HOLD = 700
+door_open_image = None # 目前過場要顯示的圖片
+door_open_target_state = None # 過場播完之後要切換到哪個 game_state
+door_open_start_time = 0
+
+
+def start_door_open_transition(image, target_state):
+    """開始播放「開門」過場：先顯示 image，淡入、停留一下之後自動切到 target_state"""
+    global door_open_image, door_open_target_state, door_open_start_time, game_state
+    door_open_image = image
+    door_open_target_state = target_state
+    door_open_start_time = pygame.time.get_ticks()
+    game_state = 'DOOR_OPENING'
+
+
+def draw_door_open_transition():
+    """繪製開門過場畫面：圖片淡入後停留一小段時間，時間到就自動切到內部畫面"""
+    global game_state
+    screen.fill(BLACK)
+    elapsed = pygame.time.get_ticks() - door_open_start_time
+    if door_open_image:
+        alpha = max(0, min(255, round(255 * elapsed / DOOR_OPEN_FADE_IN)))
+        if alpha >= 255:
+            screen.blit(door_open_image, ((WIDTH - door_open_image.get_width()) // 2, 0))
+        else:
+            faded = door_open_image.copy()
+            faded.set_alpha(alpha)
+            screen.blit(faded, ((WIDTH - door_open_image.get_width()) // 2, 0))
+    if elapsed >= DOOR_OPEN_FADE_IN + DOOR_OPEN_HOLD:
+        game_state = door_open_target_state
+
 
 work_table_rect = pygame.Rect(302, 129, 230, 196) # 工具間畫面裡工作桌的範圍（等比例縮放後的位置），滑鼠點擊用
 SCREWDRIVER_TABLE_ITEM_NAME = '維修員留下的螺絲起子'
@@ -2491,14 +2543,14 @@ def draw_night1_choice():
     prompt_surf = font.render("要打開駕駛室的門嗎？", True, WHITE)
     screen.blit(prompt_surf, (WIDTH // 2 - prompt_surf.get_width() // 2, HEIGHT // 2 - 60))
 
-    pygame.draw.rect(screen, RED, night1_choice_open_rect)
-    pygame.draw.rect(screen, BLACK, night1_choice_open_rect, 3)
+    pygame.draw.rect(screen, RED, night1_choice_open_rect, border_radius=12)
+    pygame.draw.rect(screen, BLACK, night1_choice_open_rect, 3, border_radius=12)
     open_surf = font_small.render("開門", True, WHITE)
     screen.blit(open_surf, (night1_choice_open_rect.centerx - open_surf.get_width() // 2,
                             night1_choice_open_rect.centery - open_surf.get_height() // 2))
 
-    pygame.draw.rect(screen, (70, 90, 160), night1_choice_close_rect)
-    pygame.draw.rect(screen, BLACK, night1_choice_close_rect, 3)
+    pygame.draw.rect(screen, (70, 90, 160), night1_choice_close_rect, border_radius=12)
+    pygame.draw.rect(screen, BLACK, night1_choice_close_rect, 3, border_radius=12)
     close_surf = font_small.render("不開門", True, WHITE)
     screen.blit(close_surf, (night1_choice_close_rect.centerx - close_surf.get_width() // 2,
                              night1_choice_close_rect.centery - close_surf.get_height() // 2))
@@ -2553,14 +2605,14 @@ def draw_story_choice():
     prompt_surf = font.render(choice_prompt, True, WHITE)
     screen.blit(prompt_surf, (WIDTH // 2 - prompt_surf.get_width() // 2, HEIGHT // 2 - 60))
 
-    pygame.draw.rect(screen, RED, choice_rect_a)
-    pygame.draw.rect(screen, BLACK, choice_rect_a, 3)
+    pygame.draw.rect(screen, RED, choice_rect_a, border_radius=12)
+    pygame.draw.rect(screen, BLACK, choice_rect_a, 3, border_radius=12)
     label_a_surf = font_small.render(choice_label_a, True, WHITE)
     screen.blit(label_a_surf, (choice_rect_a.centerx - label_a_surf.get_width() // 2,
                                choice_rect_a.centery - label_a_surf.get_height() // 2))
 
-    pygame.draw.rect(screen, (70, 90, 160), choice_rect_b)
-    pygame.draw.rect(screen, BLACK, choice_rect_b, 3)
+    pygame.draw.rect(screen, (70, 90, 160), choice_rect_b, border_radius=12)
+    pygame.draw.rect(screen, BLACK, choice_rect_b, 3, border_radius=12)
     label_b_surf = font_small.render(choice_label_b, True, WHITE)
     screen.blit(label_b_surf, (choice_rect_b.centerx - label_b_surf.get_width() // 2,
                                choice_rect_b.centery - label_b_surf.get_height() // 2))
@@ -2746,12 +2798,12 @@ def try_interact(click_pos=None):
         # 查看駕駛室櫃子內部
         game_state = 'CASE_VIEW'
     elif not lights_out and current_scene == TOILET_SCENE and conductor_rect.colliderect(toilet_interact_rect):
-        # 走進廁所
-        game_state = 'TOILET_VIEW'
+        # 走進廁所前，先播放開門過場
+        start_door_open_transition(open_toilet_img, 'TOILET_VIEW')
     elif not lights_out and current_scene == TOOLROOM_SCENE and conductor_rect.colliderect(toolroom_interact_rect):
         if TOOLROOM_KEY_ITEM_NAME in inventory:
-            # 走進工具間
-            game_state = 'TOOLROOM_VIEW'
+            # 走進工具間前，先播放開門過場
+            start_door_open_transition(open_toolroom_img, 'TOOLROOM_VIEW')
         else:
             dialogue_lines = [(" ", "門鎖住了，需要工具間鑰匙才能進去。")]
             dialogue_index = 0
@@ -3334,6 +3386,14 @@ while running:
                 console_box_unlocked = True
 
         draw_box_view()
+
+    elif game_state == 'DOOR_OPENING':
+        # --- 走進廁所／工具間前的開門過場：淡入、停留一下就自動接到內部畫面，不能按鍵跳過 ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+        draw_door_open_transition()
 
     elif game_state == 'TOILET_VIEW':
         # --- 廁所內部畫面的事件與繪圖 ---
