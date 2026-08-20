@@ -2449,13 +2449,13 @@ def draw_day_title_card():
     else:
         alpha = 255
 
-    # 白天版的圖片是黑色毛筆字，要用亮色背景才看得清楚；晚上版是白色毛筆字，要用暗色背景
-    is_night_stage = day_title_card['stage'].endswith('NIGHT')
-    overlay_color = (0, 0, 0) if is_night_stage else (245, 240, 225)
-    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    overlay.fill((*overlay_color, round(140 * alpha / 255)))
-    screen.blit(overlay, (0, 0))
+    # 疊一層純黑背景做轉場的淡入淡出，把底下的場景畫面完全蓋掉，
+    # 營造「切到黑畫面 → 顯示標題卡 → 淡出回到新場景」的轉場效果
+    black_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    black_overlay.fill((0, 0, 0, alpha))
+    screen.blit(black_overlay, (0, 0))
 
+    is_night_stage = day_title_card['stage'].endswith('NIGHT')
     img = day_title_images.get(day_title_card['stage'])
     if img:
         img_copy = img.copy()
