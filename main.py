@@ -217,6 +217,71 @@ except (pygame.error, FileNotFoundError) as e:
     little_girl_scream_sound = None
 horror_girl_singing_channel = None # 目前正在播放哼歌音效的聲道，離開事件、進入尖叫階段時要停掉
 horror_girl_scream_channel = None # 目前正在播放尖叫音效的聲道，用來偵測音效是否播完
+horror_girl_event_done = False # 恐怖事件是否已經結束：結束後小女孩晚上就不會再出現、不能再互動
+
+def load_walking_footstep_sounds(filename, volume):
+    """把整段走路音效切割成一顆一顆單獨的腳步聲：先算出音量的震幅包絡線，抓出每一次腳踩地的爆音時間點，
+    再依照這些時間點把音檔切成一小段一小段，回傳切好的腳步聲列表。
+    找不到 numpy／pygame.sndarray 或偵測失敗時，整段音檔當作只有一顆腳步聲使用。"""
+    sound = pygame.mixer.Sound(os.path.join('sound', filename))
+    try:
+        import numpy as np
+        import pygame.sndarray as pygame_sndarray # 用別名 import，避免局部繫結蓋掉外層的 pygame 名稱
+        sample_rate = pygame.mixer.get_init()[0]
+        arr = pygame_sndarray.array(sound)
+        mono = arr.astype(np.float32).mean(axis=1) if arr.ndim > 1 else arr.astype(np.float32)
+        total_samples = len(mono)
+
+        # 用整流＋滑動平均算出震幅包絡線，再找出明顯高於平均音量的爆音（腳踩地的瞬間）當作腳步時間點
+        window = max(1, round(sample_rate * 0.02)) # 20 毫秒的平滑窗
+        envelope = np.convolve(np.abs(mono), np.ones(window) / window, mode='same')
+        envelope = envelope / max(envelope.max(), 1e-6)
+        threshold = 0.3
+        min_gap = round(sample_rate * 0.25) # 兩個腳步之間至少間隔 250 毫秒，避免同一步被偵測成好幾個峰值
+        onsets = []
+        i = 0
+        while i < total_samples:
+            if envelope[i] > threshold:
+                window_end = min(total_samples, i + min_gap)
+                peak = i + int(np.argmax(envelope[i:window_end]))
+                onsets.append(peak)
+                i = peak + min_gap
+            else:
+                i += 1
+        if not onsets:
+            raise ValueError('沒有偵測到明顯的腳步聲峰值')
+
+        lead = round(sample_rate * 0.03) # 峰值前保留一點點時間，才不會切到攻擊起始的瞬間
+        max_len = round(sample_rate * 0.45) # 兩個腳步之間才需要限制長度，避免切到下一步；最後一顆（或只有一顆）直接用到檔案結尾
+        footstep_sounds = []
+        for index, onset in enumerate(onsets):
+            start = max(0, onset - lead)
+            if index + 1 < len(onsets):
+                next_onset = onsets[index + 1] - lead
+                end = min(total_samples, next_onset, onset + max_len)
+            else:
+                end = total_samples # 最後一顆（或只有一顆）腳步聲，不要提早裁掉尾音
+            clip = np.ascontiguousarray(arr[start:end])
+            clip_sound = pygame_sndarray.make_sound(clip)
+            clip_sound.set_volume(volume)
+            footstep_sounds.append(clip_sound)
+        return footstep_sounds
+    except Exception as e:
+        print(f"無法切割音效 '{filename}' 的腳步聲，改用整段音效當作單一腳步聲: {e}")
+        sound.set_volume(volume)
+        return [sound]
+
+
+# 角色走路的腳步聲：把 walking.mp3 切成一顆一顆腳步聲，角色移動時依固定間隔輪流播放，
+# 不依賴走路動畫本身（動畫一輪要 2 秒多，用動畫進度來對齊反而常常只聽到第一步）
+try:
+    footstep_sounds = load_walking_footstep_sounds('walking.mp3', 0.35)
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入音效 'walking.mp3': {e}")
+    footstep_sounds = []
+FOOTSTEP_INTERVAL = 800 if footstep_sounds else 0 # 每顆腳步聲間隔的毫秒數，固定 800 毫秒
+footstep_timer = 0 # 距離下一顆腳步聲還要多少毫秒
+footstep_play_index = 0 # 下一顆要播放的是第幾顆腳步聲（會依序循環）
 current_music_key = None # 目前正在播放的音樂鍵值，None 表示沒有音樂在播
 
 
@@ -1731,10 +1796,12 @@ def draw_carriage_scene(camera_offset_x, scene_name):
             chair_rect.midbottom = (pos - camera_offset_x, HEIGHT - FLOOR_HEIGHT + 20)
             screen.blit(chair_day_img, chair_rect)
     elif not is_day and chair_night_img and chair_night_positions:
-        # 晚上老太太不出現、不用跳過位置；小女孩、老維修員晚上還在，要跳過對應位置（用容許誤差比對，
-        # 因為晚上跟白天的座椅位置是分別計算的，不會完全一樣）
+        # 晚上老太太不出現、不用跳過位置；老維修員晚上還在，要跳過對應位置（用容許誤差比對，
+        # 因為晚上跟白天的座椅位置是分別計算的，不會完全一樣）。
+        # 小女孩只有「已經熄燈、恐怖事件還沒結束」這段期間才會出現在座位上，其餘時間（熄燈前、事件結束後）
+        # 座位要跟老太太一樣改畫空椅子，不能繼續跳過
         for pos in chair_night_positions:
-            if scene_name == GIRL_SCENE and abs(pos - GIRL_CHAIR_X) < 30:
+            if scene_name == GIRL_SCENE and abs(pos - GIRL_CHAIR_X) < 30 and lights_out and not horror_girl_event_done:
                 continue
             if scene_name == OLD_WORKER_SCENE and day_night_index >= OLD_WORKER_MIN_DAY_INDEX and abs(pos - OLD_WORKER_CHAIR_X) < 30:
                 continue
@@ -1855,8 +1922,11 @@ def draw_old_lady(camera_offset_x):
 
 
 def draw_girl(camera_offset_x):
-    """繪製小女孩 NPC（僅在車廂二場景顯示，用 little_girl.png 取代車廂二的第四張椅子）"""
+    """繪製小女孩 NPC（僅在車廂二場景顯示，用 little_girl.png 取代車廂二的第四張椅子）。
+    晚上時她只會在燈熄滅後才出現，恐怖事件結束（對話完）後就不會再出現了；白天不受影響，照常顯示。"""
     if current_scene != GIRL_SCENE:
+        return
+    if not is_daytime() and (not lights_out or horror_girl_event_done):
         return
     screen_rect = girl_rect.move(-camera_offset_x, 0)
     if little_girl_img:
@@ -2505,7 +2575,7 @@ def reset_game():
     global has_guide, has_girl_painting, has_talked_to_old_lady, active_npc, manual_view
     global dialogue_lines, dialogue_index, game_over_reason, intro_monologue_shown
     global console_box_screws, console_box_unlocked, screw_removal_anim, current_luggage_rack_key
-    global horror_girl_singing_channel, horror_girl_scream_channel
+    global horror_girl_singing_channel, horror_girl_scream_channel, horror_girl_event_done
 
     conductor_rect.x = COCKPIT_WIDTH - DOOR_WIDTH - CONDUCTOR_SIZE - 10
     conductor_rect.y = HEIGHT - FLOOR_HEIGHT - CONDUCTOR_SIZE + CONDUCTOR_Y_OFFSET
@@ -2547,6 +2617,7 @@ def reset_game():
         horror_girl_singing_channel.stop()
     horror_girl_singing_channel = None
     horror_girl_scream_channel = None
+    horror_girl_event_done = False
 
 
 def draw_conductor(surface, rect, image, camera_offset_x):
@@ -2583,6 +2654,9 @@ def draw_interact_hint(camera_offset_x):
             interactables.append(toilet_interact_rect)
         if current_scene == TOOLROOM_SCENE:
             interactables.append(toolroom_interact_rect)
+    elif flashlight_on and not horror_girl_event_done and current_scene == GIRL_SCENE:
+        # 晚上熄燈後，手電筒照到小女孩時（範圍內、手電筒已開、事件還沒發生過）要有光點標記，提示可以互動
+        interactables.append(girl_interact_rect)
 
     interactables = [rect for rect in interactables if conductor_rect.colliderect(rect)] # 只保留角色目前站在範圍內的
 
@@ -2634,14 +2708,15 @@ def try_interact(click_pos=None):
         dialogue_index = 0
         active_npc = 'OLD_LADY'
         game_state = 'DIALOGUE'
-    elif not lights_out and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_interact_rect):
+    elif is_daytime() and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_interact_rect):
         # 與小女孩互動，開始對話（已經拿過畫的話改播重複對話）
         dialogue_lines = girl_dialogue_repeat if has_girl_painting else girl_dialogue
         dialogue_index = 0
         active_npc = 'GIRL'
         game_state = 'DIALOGUE'
-    elif lights_out and flashlight_on and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_interact_rect):
-        # 晚上打開手電筒後在小女孩座位遇到她，觸發恐怖事件
+    elif (lights_out and flashlight_on and not horror_girl_event_done
+          and current_scene == GIRL_SCENE and conductor_rect.colliderect(girl_interact_rect)):
+        # 晚上打開手電筒後在小女孩座位遇到她，觸發恐怖事件（只會發生一次，事件結束後她就不會再出現了）
         if horror_girl_singing_sound:
             horror_girl_singing_channel = horror_girl_singing_sound.play(loops=-1)
         dialogue_lines = horror_girl_talk_lines
@@ -2693,6 +2768,10 @@ dt = 0 # 每一幀經過的毫秒數，供走路動畫計時使用
 running = True
 while running:
     update_background_music()
+
+    if game_state != 'PLAYING' and footstep_timer != 0:
+        # 離開遊戲場景（對話、選單、特寫畫面等）時，下次回來走路要重新從頭計時
+        footstep_timer = 0
 
     if game_state == 'START':
         # --- 開始畫面的事件與繪圖 ---
@@ -2853,6 +2932,18 @@ while running:
 
             current_frame = conductor_walk_frames[conductor_anim_index]
             conductor_img = pygame.transform.flip(current_frame, True, False) if facing_direction == 'RIGHT' else current_frame
+
+        # 走路腳步聲：角色移動時依固定間隔輪流播放切好的腳步聲，開始移動就立刻先響一聲，
+        # 之後每隔 FOOTSTEP_INTERVAL 毫秒播下一顆（播完 4 顆後從頭循環），停下腳步就歸零
+        if is_moving and footstep_sounds:
+            footstep_timer -= dt
+            if footstep_timer <= 0:
+                footstep_sounds[footstep_play_index % len(footstep_sounds)].play()
+                footstep_play_index += 1
+                footstep_timer = FOOTSTEP_INTERVAL
+        else:
+            footstep_timer = 0
+            footstep_play_index = 0
 
         camera_x = conductor_rect.centerx - (WIDTH // 2)
         if current_world_width <= WIDTH:
@@ -3097,6 +3188,7 @@ while running:
             if advance_dialogue:
                 dialogue_index += 1
                 if dialogue_index >= len(dialogue_lines):
+                    horror_girl_event_done = True # 事件結束，小女孩晚上不會再出現、不能再互動
                     game_state = 'PLAYING'
 
         screen.fill(BLACK)
