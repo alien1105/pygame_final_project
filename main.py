@@ -239,6 +239,20 @@ except (pygame.error, FileNotFoundError) as e:
     print(f"無法載入音效 'jumpscare.mp3': {e}")
     jumpscare_sound = None
 
+# 走進廁所、工具間時的開門音效；獲得道具時的拾取音效
+OPEN_DOOR_BASE_VOLUME = 0.8
+PICK_ITEM_BASE_VOLUME = 0.5
+try:
+    open_door_sound = pygame.mixer.Sound(os.path.join('sound', 'open_door.mp3'))
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入音效 'open_door.mp3': {e}")
+    open_door_sound = None
+try:
+    pick_item_sound = pygame.mixer.Sound(os.path.join('sound', 'pick.mp3'))
+except (pygame.error, FileNotFoundError) as e:
+    print(f"無法載入音效 'pick.mp3': {e}")
+    pick_item_sound = None
+
 
 def load_walking_footstep_sounds(filename, volume):
     """把整段走路音效切割成一顆一顆單獨的腳步聲：先算出音量的震幅包絡線，抓出每一次腳踩地的爆音時間點，
@@ -319,6 +333,10 @@ def apply_sound_effect_volumes():
         jumpscare_laugh_sound.set_volume(JUMPSCARE_LAUGH_BASE_VOLUME * music_volume)
     if jumpscare_sound:
         jumpscare_sound.set_volume(JUMPSCARE_BASE_VOLUME * music_volume)
+    if open_door_sound:
+        open_door_sound.set_volume(OPEN_DOOR_BASE_VOLUME * music_volume)
+    if pick_item_sound:
+        pick_item_sound.set_volume(PICK_ITEM_BASE_VOLUME * music_volume)
 
 
 apply_sound_effect_volumes() # 套用一次預設音量，讓音效跟背景音樂的預設大小一致
@@ -1413,9 +1431,11 @@ item_popup = None # None 表示目前沒有要顯示的提示；有的話是 {'n
 
 
 def show_item_popup(item_name):
-    """觸發「獲得道具」的提示，顯示道具圖案（有的話）跟名稱"""
+    """觸發「獲得道具」的提示，顯示道具圖案（有的話）跟名稱，並播放拾取音效"""
     global item_popup
     item_popup = {'name': item_name, 'start_time': pygame.time.get_ticks()}
+    if pick_item_sound:
+        pick_item_sound.play()
 
 
 # --- 切換天數／白天晚上時，疊在畫面上短暫顯示的標題卡（毛筆字「第X天白天／晚上」）---
@@ -1552,12 +1572,14 @@ door_open_start_time = 0
 
 
 def start_door_open_transition(image, target_state):
-    """開始播放「開門」過場：先顯示 image，淡入、停留一下之後自動切到 target_state"""
+    """開始播放「開門」過場：先顯示 image、播放開門音效，淡入、停留一下之後自動切到 target_state"""
     global door_open_image, door_open_target_state, door_open_start_time, game_state
     door_open_image = image
     door_open_target_state = target_state
     door_open_start_time = pygame.time.get_ticks()
     game_state = 'DOOR_OPENING'
+    if open_door_sound:
+        open_door_sound.play()
 
 
 def draw_door_open_transition():
